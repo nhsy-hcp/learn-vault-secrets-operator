@@ -25,27 +25,6 @@ path "demo-db/creds/dev-postgres" {
 }
 EOF
 
-vault secrets enable -path=demo-transit transit
-sleep 20
-
-vault write -force demo-transit/keys/vso-client-cache
-vault policy write demo-auth-policy-operator - <<EOF
-path "demo-transit/encrypt/vso-client-cache" {
-   capabilities = ["create", "update"]
-}
-path "demo-transit/decrypt/vso-client-cache" {
-   capabilities = ["create", "update"]
-}
-EOF
-
-vault write auth/demo-auth-mount/role/auth-role-operator \
-   bound_service_account_names=demo-operator \
-   bound_service_account_namespaces=vault-secrets-operator-system \
-   token_ttl=0 \
-   token_period=120 \
-   token_policies=demo-auth-policy-db \
-   audience=vault
-
 vault write auth/demo-auth-mount/role/auth-role \
    bound_service_account_names=demo-app \
    bound_service_account_namespaces=demo-ns \

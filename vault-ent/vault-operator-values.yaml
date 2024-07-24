@@ -11,6 +11,8 @@ controller:
         mount: demo-auth-mount
         keyName: vso-client-cache
         transitMount: demo-transit
+        namespace: us-west-org
         kubernetes:
           role: auth-role-operator
-          serviceAccount: demo-operator
+          serviceAccount: vault-secrets-operator-controller-manager
+          tokenAudiences: ["vault"]
