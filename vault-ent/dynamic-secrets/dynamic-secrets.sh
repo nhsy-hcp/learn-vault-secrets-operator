@@ -16,8 +16,8 @@ vault write demo-db/roles/dev-postgres \
       GRANT ALL PRIVILEGES ON DATABASE postgres TO \"{{name}}\";" \
    backend=demo-db \
    name=dev-postgres \
-   default_ttl="3m" \
-   max_ttl="3m"
+   default_ttl="1m" \
+   max_ttl="1m"
 
 vault policy write demo-auth-policy-db - <<EOF
 path "demo-db/creds/dev-postgres" {
