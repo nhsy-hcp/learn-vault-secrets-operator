@@ -1,1 +1,3 @@
-dynamic-secrets/README.md
+.idea/*
+**/.env
+**/vault-license.lic
