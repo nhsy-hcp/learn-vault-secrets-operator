@@ -12,17 +12,19 @@ server:
 
   enterpriseLicense:
     secretName: vault-license
-  # service:
-  #   enabled: true
-  #   type: ClusterIP
-  #   # Port on which Vault server is listening
-  #   port: 8200
-  #   # Target port to which the service should be mapped to
-  #   targetPort: 8200
-# ui:
-#   enabled: true
-#   serviceType: "LoadBalancer"
-#   externalPort: 8200
+  service:
+   enabled: true
+   type: ClusterIP
+   # Port on which Vault server is listening
+   port: 8200
+   # Target port to which the service should be mapped to
+   targetPort: 8200
+ui:
+  enabled: true
+  serviceType: "NodePort"
+  serviceNodePort: 30200
+  publishNotReadyAddresses: false
+  activeVaultPodOnly: false
 
 injector:
   enabled: "false"
