@@ -44,7 +44,7 @@ path "sys/events/subscribe/kv*" {
 }
 EOF
 
-vault write auth/demo-auth-mount/role/role1 \
+vault write auth/demo-auth-mount/role/demo-app \
 		bound_service_account_names=demo-app \
 		bound_service_account_namespaces=app \
 		policies=dev \

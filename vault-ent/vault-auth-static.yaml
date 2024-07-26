@@ -33,7 +33,7 @@ spec:
   mount: demo-auth-mount
   namespace: us-west-org
   kubernetes:
-    role: role1
+    role: demo-app
     serviceAccount: demo-app
     audiences:
       - vault
