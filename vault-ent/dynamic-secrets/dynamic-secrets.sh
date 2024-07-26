@@ -14,6 +14,8 @@ vault write demo-db/roles/dev-postgres \
    db_name=demo-db \
    creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; \
       GRANT ALL PRIVILEGES ON DATABASE postgres TO \"{{name}}\";" \
+   revocation_statements="REVOKE ALL PRIVILEGES ON DATABASE postgres FROM \"{{name}}\"; \
+       DROP ROLE IF EXISTS \"{{name}}\";" \
    backend=demo-db \
    name=dev-postgres \
    default_ttl="1m" \
