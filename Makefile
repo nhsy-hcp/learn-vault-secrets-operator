@@ -88,7 +88,7 @@ vars:
 .PHONY: vso-install
 vso-install:
 	$(call header,$@)
-	@helm install vault-secrets-operator hashicorp/vault-secrets-operator -n vault-secrets-operator-system --create-namespace --values vault-ent/vault-operator-values.yaml --version 0.8.0
+	@helm install vault-secrets-operator hashicorp/vault-secrets-operator -n vault-secrets-operator-system --create-namespace --values vault-ent/vault-operator-values.yaml --version 0.8.1
 	@sleep 10
 	@kubectl wait --for=jsonpath='{.status.phase}'=Running pod --all --namespace vault-secrets-operator-system --timeout=1m
 	@kubectl get all -n vault-secrets-operator-system
