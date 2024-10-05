@@ -1,10 +1,9 @@
 default: all-ent
 
-all-ent: start-minikube install-vault-ent-cluster config-vault install-the-vault-secrets-operator deploy-and-sync-a-secret rotate-the-secret install-postgresql-pod setup-postgresql transit-encryption setup-dynamic-secrets create-the-application
+all-ent: ent-prerequisites start-minikube install-vault-ent-cluster config-vault install-the-vault-secrets-operator deploy-and-sync-a-secret rotate-the-secret install-postgresql-pod setup-postgresql transit-encryption setup-dynamic-secrets create-the-application
+export ENT_RUN:="0"
 
-# addr := shell('kubectl exec vault-0 -n vault --  printenv KUBERNETES_PORT_443_TCP_ADDR')
-# static_secrets := shell('echo "username: $(kubectl get secrets -n app secretkv -o jsonpath="{.data.username}" | base64 -d), pass: $(kubectl get secrets -n app secretkv -o jsonpath="{.data.password}" | base64 -d)"')
-
+# foo := if '$VAULT_LICENSE' =~ '' {'${VAULT_LICENSE}'} else {error("$VAULT_LICENSE not set")}
 
 test:
     @echo $VAULT_LICENSE
@@ -13,7 +12,7 @@ test:
     @just _print_dynamic_secrets
 
 start-minikube:
-    @echo ">>> start-minikube"
+    @echo ">>> start-minikube" 
     minikube start
 
 clean-up:
@@ -29,7 +28,6 @@ prep-cluster-install:
 	@helm search repo hashicorp/vault
 
 install-vault-cluster: prep-cluster-install
-	$(call header,$@)
 	@helm install vault hashicorp/vault -n vault --create-namespace --values vault/vault-values.yaml
 	@kubectl get pods -n vault
 
@@ -186,3 +184,32 @@ create-the-application:
     sleep 5
     echo "dynamic - username: $(kubectl get secrets -n demo-ns -o jsonpath="{.items[1].data.username}" | base64 -d), pass: $(kubectl get secrets -n demo-ns -o jsonpath="{.items[1].data.password}" | base64 -d)"
 
+prerequisites:
+    #!/usr/bin/env bash
+    if ! command -v kubectl 2>&1 >/dev/null
+    then
+        echo "kubectl could not be found"
+        exit 1
+    fi
+    if ! command -v k9s 2>&1 >/dev/null
+    then
+        echo "k9s could not be found"
+        exit 1
+    fi
+    if ! command -v helm 2>&1 >/dev/null
+    then
+        echo "helm could not be found"
+        exit 1
+    fi
+    if ! command -v minikube 2>&1 >/dev/null
+    then
+        echo "minikube could not be found"
+        exit 1
+    fi
+
+ent-prerequisites: prerequisites
+    #!/usr/bin/env bash
+    if [ -z "${VAULT_LICENSE}" ]; then
+        echo "VAULT_LICENSE not set"
+        exit 1
+    fi
