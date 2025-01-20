@@ -1,16 +1,16 @@
+#!/bin/sh
+
 set -xe
-vault namespace create us-west-org
+vault namespace create us-west-org || true
 sleep 20
 
 export VAULT_NAMESPACE=us-west-org
-vault auth enable -path demo-auth-mount kubernetes
+vault auth enable -path demo-auth-mount kubernetes || true
 sleep 20
 
 vault write auth/demo-auth-mount/config \
 		kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
-
-
-vault secrets enable -path=demo-transit transit
+vault secrets enable -path=demo-transit transit || true
 sleep 20
 
 vault write -force demo-transit/keys/vso-client-cache
@@ -20,6 +20,9 @@ path "demo-transit/encrypt/vso-client-cache" {
 }
 path "demo-transit/decrypt/vso-client-cache" {
    capabilities = ["create", "update"]
+}
+path "sys/leases/revoke/gcp/roleset/+/key/*" {
+  capabilities = ["create", "update"]
 }
 EOF
 
@@ -34,6 +37,7 @@ vault write auth/demo-auth-mount/role/auth-role-operator \
 vault secrets enable -path=kvv2 kv-v2
 sleep 20
 
+vault kv put kvv2/webapp/config username="static-user" password="static-password"
 vault policy write dev - <<EOF
 path "kvv2/data/webapp/config" {
    capabilities = ["read", "list", "subscribe"]
@@ -44,10 +48,9 @@ path "sys/events/subscribe/kv*" {
 }
 EOF
 
-vault write auth/demo-auth-mount/role/demo-app \
-		bound_service_account_names=demo-app \
+vault write auth/demo-auth-mount/role/static-app \
+		bound_service_account_names=static-app \
 		bound_service_account_namespaces=app \
 		policies=dev \
 		token_period=2m
 
-vault kv put kvv2/webapp/config username="static-user" password="static-password"

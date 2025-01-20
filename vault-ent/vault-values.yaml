@@ -2,7 +2,7 @@
 #   tlsDisable: true # no tls initially
 server:
   image:
-    tag: "1.16.3-ent" # required for vault enterprise?
+    tag: "1.18-ent" # required for vault enterprise
     repository: hashicorp/vault-enterprise
   dev:
     enabled: true

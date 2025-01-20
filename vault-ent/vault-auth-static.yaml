@@ -20,7 +20,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   namespace: app
-  name: demo-app
+  name: static-app
 ---
 apiVersion: secrets.hashicorp.com/v1beta1
 kind: VaultAuth
@@ -33,7 +33,7 @@ spec:
   mount: demo-auth-mount
   namespace: us-west-org
   kubernetes:
-    role: demo-app
-    serviceAccount: demo-app
+    role: static-app
+    serviceAccount: static-app
     audiences:
       - vault
