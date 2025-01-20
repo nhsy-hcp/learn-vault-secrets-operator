@@ -1,0 +1,21 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: gcp
+  name: gcp-sa
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: gcp-dynamic-auth
+  namespace: gcp
+spec:
+  method: kubernetes
+  mount: demo-auth-mount
+  namespace: us-west-org
+  kubernetes:
+    role: gcp-role
+    serviceAccount: gcp-sa
+    audiences:
+      - vault

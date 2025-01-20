@@ -1,3 +1,4 @@
 .idea/*
 **/.env
 **/vault-license.lic
+**/*credentials.json

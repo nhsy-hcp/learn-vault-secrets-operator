@@ -1,0 +1,212 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  VAULT_CHART_VERSION: 0.29.1
+  VSO_CHART_VERSION: 0.9.1
+
+tasks:
+  all:
+    cmds:
+      - task: k3d-create
+      - task: vault-prereqs
+      - task: vault-install
+      - task: svc-health
+        
+  k3d-create:
+    cmds:
+      - k3d cluster create vault -p "8200:30200@server:0" -p "8080:30201@server:0" --k3s-arg "--disable=traefik@server:0" --k3s-arg "--disable=servicelb@server:0" --wait
+      - sleep 3
+
+  destroy:
+    cmds:
+      - k3d cluster delete vault
+      - sleep 3
+      - docker image prune -af
+
+  vault-prereqs:
+    cmds:
+      - kubectl create ns vault
+      - kubectl create secret generic vault-license --from-file license=vault-ent/vault-license.lic -n vault
+
+  vault-install:
+    cmds:
+      - helm upgrade --install vault hashicorp/vault -n vault --values vault-ent/vault-values.yaml --version {{ .VAULT_CHART_VERSION }}
+      - sleep 10
+      - kubectl wait --for=jsonpath='{.status.phase}'=Running pod --all --namespace vault --timeout=1m
+      - kubectl get all -n vault
+      - kubectl exec -n vault -ti vault-0 -- vault audit enable file file_path=stdout
+      - sleep 10
+      - task: status
+
+  vault-init:
+    cmds:
+      - ./vault/10-vault-init.sh
+      - sleep 10
+
+  vault-upgrade:
+    cmds:
+      - helm upgrade vault hashicorp/vault -n vault --values vault-ent/vault-values.yaml
+      - sleep 10
+      - kubectl wait --for=jsonpath='{.status.phase}'=Running pod --all --namespace vault --timeout=1m
+      - kubectl get all -n vault
+      - task: svc-health
+
+  vault-uninstall:
+    cmds:
+      - helm uninstall vault -n vault
+      - kubectl delete pvc -n vault --all
+      - sleep 10
+
+  vault-reinstall: 
+    cmds:
+      - vault-uninstall
+      - vault-install
+
+  status:
+    cmds:
+      - kubectl exec -n vault -ti vault-0 -- vault status
+
+  logs:
+    cmds:
+      - kubectl logs -n vault sts/vault -f
+
+  events:
+    cmds:
+      - kubectl get events --all-namespaces --sort-by='.metadata.creationTimestamp' -w
+
+  svc-health:
+    cmds:
+      - curl -s http://localhost:8200/v1/sys/health | jq
+
+  health:
+    cmds:
+      - kubectl exec -n vault -ti vault-0 -- wget -qO - http://localhost:8200/v1/sys/health
+
+  vars:
+    cmds:
+      - echo "export VAULT_ADDR=http://127.0.0.1:8200"
+      - echo "export VAULT_TOKEN=root"
+
+  vso-install:
+    cmds:
+      - helm install vault-secrets-operator hashicorp/vault-secrets-operator -n vault-secrets-operator-system --create-namespace --values vault-ent/vault-operator-values.yaml --version {{ .VSO_CHART_VERSION }}
+      - sleep 10
+      - kubectl wait --for=jsonpath='{.status.phase}'=Running pod --all --namespace vault-secrets-operator-system --timeout=1m
+      - kubectl get all -n vault-secrets-operator-system
+      - sleep 10
+
+  vso-uninstall:
+    cmds:
+      - kubectl delete ns app
+      - helm uninstall vault-secrets-operator -n vault-secrets-operator-system
+      - sleep 10
+    ignore_error: true
+
+  vso-logs:
+    cmds:
+      - kubectl logs -n vault-secrets-operator-system -l app.kubernetes.io/name=vault-secrets-operator -f
+
+  static-secrets:
+    cmds:
+      - kubectl cp -n vault ./vault-ent/static-secrets.sh vault-0:/tmp/static-secrets.sh
+      - kubectl exec -n vault -ti vault-0 -- /bin/sh -c '/tmp/static-secrets.sh'
+      - kubectl create ns app
+      - kubectl apply -f vault-ent/vault-auth-static.yaml
+      - kubectl apply -f vault-ent/static-secret.yaml
+      - sleep 3
+      - kubectl get secrets -n app -o yaml
+
+  dynamic-secrets:
+    cmds:
+      - kubectl create ns postgres
+      - |
+        helm upgrade --install postgres bitnami/postgresql --namespace postgres \
+          --set auth.audit.logConnections=true  --set auth.postgresPassword=secret-pass
+      - sleep 10
+      - kubectl wait --for=jsonpath='{.status.phase}'=Running pod --all --namespace postgres --timeout=1m
+      - kubectl cp -n vault ./vault-ent/dynamic-secrets/dynamic-secrets.sh vault-0:/tmp/dynamic-secrets.sh
+      - kubectl exec -n vault -ti vault-0 -- /bin/sh -c '/tmp/dynamic-secrets.sh'
+      - kubectl create ns demo-ns
+      - kubectl apply -f vault-ent/dynamic-secrets/.
+      - sleep 10
+      - kubectl get secrets -n demo-ns -o yaml
+
+  pg-test:
+    cmds:
+      - |
+        echo DB_USER: $DB_USER
+        echo DB_PASS: $DB_PASS
+        kubectl -ti -n postgres exec postgres-postgresql-0 -- /bin/sh -c "PGPASSWORD=\"$DB_PASS\" psql -U $DB_USER -d postgres -c 'SELECT datname FROM pg_database;'"
+    env:
+      DB_USER:
+        sh: kubectl get secret -n demo-ns vso-db-demo-created -o jsonpath='{.data.username}' | base64 -d
+      DB_PASS:
+        sh: kubectl get secret -n demo-ns vso-db-demo-created -o jsonpath='{.data.password}' | base64 -d
+
+  gcp-secrets-prereqs:
+    cmds:
+      - gcloud iam service-accounts create vault-gcp-sa --display-name "Vault GCP Service Account"
+      - gcloud projects add-iam-policy-binding $PROJECT_ID --member serviceAccount:vault-gcp-sa@$PROJECT_ID.iam.gserviceaccount.com --role roles/iam.serviceAccountKeyAdmin
+      - gcloud projects add-iam-policy-binding $PROJECT_ID --member serviceAccount:vault-gcp-sa@$PROJECT_ID.iam.gserviceaccount.com --role roles/iam.serviceAccountAdmin
+      - gcloud projects add-iam-policy-binding $PROJECT_ID --member serviceAccount:vault-gcp-sa@$PROJECT_ID.iam.gserviceaccount.com --role roles/resourcemanager.projectIamAdmin
+      - gcloud iam service-accounts keys create ./vault-ent/dynamic-secrets/gcp/gcp-credentials.json --iam-account=vault-gcp-sa@$PROJECT_ID.iam.gserviceaccount.com
+    env:
+      PROJECT_ID:
+        sh: gcloud config get-value project
+
+  gcp-secrets:
+    dir: ./vault-ent/dynamic-secrets/gcp
+    cmds:
+      - ./gcp-secrets.sh
+      - kubectl create ns gcp || true
+      - kubectl apply -f gcp-vault-auth-dynamic.yaml
+      - |  
+        envsubst < ./gcp-secret.yaml | kubectl apply -f -
+    env:
+      PROJECT_ID:
+        sh: gcloud config get-value project
+
+  vault-shell:
+    cmds:
+      - kubectl exec -n vault -ti vault-0 -- /bin/sh
+
+  gcp-app-build:
+    dir: ./vault-ent/dynamic-secrets/gcp/example
+    cmds:
+      - docker buildx build --no-cache -t google-app .
+      - k3d image import google-app -c vault
+
+  gcp-app-apply:
+    dir: ./vault-ent/dynamic-secrets/gcp
+    cmds:
+      - |  
+        envsubst < ./gcp-app.yaml | kubectl apply -f -
+    env:
+      PROJECT_ID:
+        sh: gcloud config get-value project
+
+  gcp-app-delete:
+    dir: ./vault-ent/dynamic-secrets/gcp
+    cmds:
+      - kubectl delete svc gcp-app -n gcp
+      - kubectl delete deploy gcp-app -n gcp
+    ignore_error: true
+
+  gcp-app-test2:
+    cmds:
+      - kubectl run -n gcp --rm -ti --image=busybox --restart=Never bb-{{index (.ID | lower | splitList "-") 0}} -- /bin/sh -c "while true; do wget -qO- http://gcp-app-internal:5000/project; sleep 5;done"
+    vars:
+      ID:
+        sh: uuidgen
+
+  gcp-app-test:
+    cmds:
+      - while true; do curl -s http://localhost:8080/project; sleep 5;done
+
+  leases:
+    dotenv: [".env"]
+    cmds:
+     - |
+       vault list  -format=json /sys/leases/lookup/gcp/roleset/hc-d565e9864f954eeeb390bb67e1c-viewer-key/key | jq -r '.[]' | xargs -I {} vault lease lookup  gcp/roleset/hc-d565e9864f954eeeb390bb67e1c-viewer-key/key/{}

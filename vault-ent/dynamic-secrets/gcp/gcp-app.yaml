@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gcp-app
+  namespace: gcp
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gcp-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gcp-app
+    spec:
+      containers:
+      - name: gcp-app
+        image: google-app
+        imagePullPolicy: Never
+        env:
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: /var/run/secrets/vso-gcp-key/private_key_data
+        - name: PROJECT_ID
+          value: $PROJECT_ID
+        volumeMounts:
+          - name: vso-gcp-key
+            mountPath: /var/run/secrets/vso-gcp-key
+            readOnly: true
+        readinessProbe:
+          initialDelaySeconds: 15
+          httpGet:
+            path: /health
+            port: 5000
+      volumes:
+        - name: vso-gcp-key
+          secret:
+            secretName: "vso-gcp-key"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gcp-app
+  namespace: gcp
+spec:
+  selector:
+    app.kubernetes.io/name: gcp-app
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+      nodePort: 30201
+  type: NodePort
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gcp-app-internal
+  namespace: gcp
+spec:
+  selector:
+    app.kubernetes.io/name: gcp-app
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+  type: ClusterIP
+#---
+#apiVersion: policy/v1
+#kind: PodDisruptionBudget
+#metadata:
+#  name: gcp-pdb
+#  namespace: gcp
+#spec:
+#  maxUnavailable: 1
+#  selector:
+#    matchLabels:
+#      app.kubernetes.io/name: gcp-app
