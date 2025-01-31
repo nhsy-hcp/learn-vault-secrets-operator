@@ -13,7 +13,15 @@ tasks:
       - task: vault-prereqs
       - task: vault-install
       - task: svc-health
-        
+      - task: vso-install
+      - task: static-secrets
+
+  gcp:
+    cmds:
+      - task: gcp-secrets
+      - task: gcp-app-build
+      - task: gcp-app-apply
+
   k3d-create:
     cmds:
       - k3d cluster create vault -p "8200:30200@server:0" -p "8080:30201@server:0" --k3s-arg "--disable=traefik@server:0" --k3s-arg "--disable=servicelb@server:0" --wait
@@ -24,6 +32,14 @@ tasks:
       - k3d cluster delete vault
       - sleep 3
       - docker image prune -af
+
+  destroy-gcp:
+    cmds:
+      - task: gcp-app-delete
+      - cmd: kubectl delete ns gcp
+      - task: vso-uninstall
+      - task: vault-uninstall
+      - task: destroy
 
   vault-prereqs:
     cmds:
@@ -148,6 +164,7 @@ tasks:
   gcp-secrets-prereqs:
     cmds:
       - gcloud iam service-accounts create vault-gcp-sa --display-name "Vault GCP Service Account"
+      - sleep 10
       - gcloud projects add-iam-policy-binding $PROJECT_ID --member serviceAccount:vault-gcp-sa@$PROJECT_ID.iam.gserviceaccount.com --role roles/iam.serviceAccountKeyAdmin
       - gcloud projects add-iam-policy-binding $PROJECT_ID --member serviceAccount:vault-gcp-sa@$PROJECT_ID.iam.gserviceaccount.com --role roles/iam.serviceAccountAdmin
       - gcloud projects add-iam-policy-binding $PROJECT_ID --member serviceAccount:vault-gcp-sa@$PROJECT_ID.iam.gserviceaccount.com --role roles/resourcemanager.projectIamAdmin
@@ -159,7 +176,11 @@ tasks:
   gcp-secrets:
     dir: ./vault-ent/dynamic-secrets/gcp
     cmds:
-      - ./gcp-secrets.sh
+      - |
+        until ./gcp-secrets.sh; do
+          echo "Retrying in 5 seconds..." 
+          sleep 5 
+        done
       - kubectl create ns gcp || true
       - kubectl apply -f gcp-vault-auth-dynamic.yaml
       - |  
@@ -209,4 +230,7 @@ tasks:
     dotenv: [".env"]
     cmds:
      - |
-       vault list  -format=json /sys/leases/lookup/gcp/roleset/hc-d565e9864f954eeeb390bb67e1c-viewer-key/key | jq -r '.[]' | xargs -I {} vault lease lookup  gcp/roleset/hc-d565e9864f954eeeb390bb67e1c-viewer-key/key/{}
+       vault list  -format=json /sys/leases/lookup/gcp/roleset/${PROJECT_ID}-viewer-key/key | jq -r '.[]' | xargs -I {} vault lease lookup  gcp/roleset/${PROJECT_ID}-viewer-key/key/{}
+    env:
+      PROJECT_ID:
+        sh: gcloud config get-value project
