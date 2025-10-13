@@ -1,0 +1,105 @@
+version: '3'
+
+tasks:
+  default:
+    cmd: task --list
+
+  init:
+    desc: initialize terraform
+    cmds:
+      - terraform init
+
+  validate:
+    desc: validate terraform configuration
+    cmds:
+      - terraform validate
+
+  format:
+    desc: format terraform files
+    cmds:
+      - terraform fmt -recursive
+
+  format-check:
+    desc: check terraform formatting
+    cmds:
+      - terraform fmt -check -recursive
+
+  plan:
+    desc: plan terraform changes
+    cmds:
+      - terraform plan
+
+  apply:
+    desc: apply terraform changes
+    cmds:
+      - terraform apply
+
+  apply-auto:
+    desc: apply terraform changes without confirmation
+    cmds:
+      - time terraform apply -auto-approve
+
+  destroy:
+    desc: destroy terraform resources
+    cmds:
+      - terraform destroy
+
+  destroy:auto:
+    desc: destroy terraform resources without confirmation
+    cmds:
+      - time terraform destroy -auto-approve
+
+  output:
+    desc: show terraform outputs
+    cmds:
+      - terraform output
+
+  output-json:
+    desc: show terraform outputs in json format
+    cmds:
+      - terraform output -json
+
+  refresh:
+    desc: refresh terraform state
+    cmds:
+      - terraform refresh
+
+  state-list:
+    desc: list resources in terraform state
+    cmds:
+      - terraform state list
+
+  clean:
+    desc: clean terraform files
+    cmds:
+      - rm -rf .terraform .terraform.lock.hcl
+
+  upgrade:
+    desc: upgrade terraform providers
+    cmds:
+      - terraform init -upgrade
+
+  all:
+    desc: run full terraform cycle (init, validate, format, plan)
+    cmds:
+      - task: format
+      - task: init
+      - task: validate
+      - task: apply-auto
+      - task: eks-credentials
+
+  eks-credentials:
+    desc: fetch eks credentials and update kubeconfig
+    cmds:
+      - aws eks update-kubeconfig --name $(terraform output -raw eks_cluster_name) --region $(terraform output -raw region)
+
+  echoserver:
+    desc: test echoserver url via browser
+    cmds:
+      - open {{. URL}}
+    vars:
+      URL:
+        sh: terraform output -raw echoserver_url
+
+  destroy:eks:
+    cmd: terraform destroy -target=module.eks
