@@ -1,0 +1,445 @@
+version: '3'
+
+dotenv:
+  - .env
+
+includes:
+  eks:
+    dir: eks
+    taskfile: eks/Taskfile.yml
+
+tasks:
+  default:
+    cmd: task --list
+
+  all:
+    desc: Run the complete Vault Secrets Operator tutorial
+    cmds:
+      - task: prerequisites
+      - task: minikube:start
+      - task: install
+
+  install:
+    cmds:
+      - task: install:vault
+      - task: init:vault
+      - task: unseal:vault
+      - task: config:vault
+      - task: install:vso
+      - task: deploy:static-secret
+      - task: verify:static-secret
+      - task: config:csi
+      - task: deploy:csi:app
+      - task: verify:csi:app
+
+  prerequisites:
+    desc: Check for required tools
+    cmds:
+      - |
+        if ! command -v kubectl &> /dev/null; then
+          echo "kubectl could not be found"
+          exit 1
+        fi
+      - |
+        if ! command -v helm &> /dev/null; then
+          echo "helm could not be found"
+          exit 1
+        fi
+      - |
+        if ! command -v minikube &> /dev/null; then
+          echo "minikube could not be found"
+          exit 1
+        fi
+      - echo "All prerequisites found"
+    silent: true
+
+  minikube:start:
+    aliases: ["start"]
+    desc: Start minikube cluster
+    cmds:
+      - |
+        if minikube status &> /dev/null; then
+          echo "minikube is already running"
+        else
+          minikube start
+        fi
+      - |
+        # Add a gp2 storageclass so the vault-values.yaml works for both EKS and minikube
+        if ! kubectl get storageclass gp2 &> /dev/null; then
+          kubectl apply -f - <<EOF
+        apiVersion: storage.k8s.io/v1
+        kind: StorageClass
+        metadata:
+          name: gp2
+        provisioner: k8s.io/minikube-hostpath
+        volumeBindingMode: Immediate
+        EOF
+          echo "gp2 storageclass created"
+        else
+          echo "gp2 storageclass already exists"
+        fi
+    silent: true
+
+  minikube:stop:
+    aliases: ["stop"]
+    desc: Stop podman machine
+    cmds:
+      - minikube stop
+
+  install:vault:
+    desc: Install Vault using Helm
+    cmds:
+      - kubectl create namespace vault || true
+      - |
+        if [ ! -f vault-ent/vault-license.lic ]; then
+          echo "Error: vault-ent/vault-license.lic not found"
+          exit 1
+        fi
+      - kubectl create secret generic vault-license -n vault --from-file=license=vault-ent/vault-license.lic || true
+      - helm repo add hashicorp https://helm.releases.hashicorp.com
+      - helm repo update
+      - helm upgrade --install vault hashicorp/vault -n vault --values vault-ent/vault-values.yaml
+      - sleep 10
+      - |
+        kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=vault -n vault --timeout=5m
+
+  init:vault:
+    desc: Initialize Vault and save keys to vault-init.json
+    cmds:
+      - |
+        kubectl exec vault-0 -n vault -- vault operator init -format=json > vault-init.json
+        echo "Vault initialized. Keys saved to vault-init.json"
+        VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        echo "Root token: $VAULT_TOKEN"
+        if [ -f .env ]; then
+          sed -i.bak '/^VAULT_TOKEN=/d' .env
+        fi
+        echo "VAULT_TOKEN=$VAULT_TOKEN" >> .env
+        echo "VAULT_TOKEN added to .env file"
+        sleep 10
+
+
+  unseal:vault:
+    desc: Unseal Vault using keys from vault-init.json
+    cmds:
+      - |
+        if [ ! -f vault-init.json ]; then
+          echo "vault-init.json not found. Run 'task init:vault' first"
+          exit 1
+        fi
+        KEY1=$(cat vault-init.json | jq -r '.unseal_keys_b64[0]')
+        KEY2=$(cat vault-init.json | jq -r '.unseal_keys_b64[1]')
+        KEY3=$(cat vault-init.json | jq -r '.unseal_keys_b64[2]')
+        kubectl exec vault-0 -n vault -- vault operator unseal $KEY1
+        kubectl exec vault-0 -n vault -- vault operator unseal $KEY2
+        kubectl exec vault-0 -n vault -- vault operator unseal $KEY3
+        echo "Vault unsealed successfully"
+
+  config:vault:
+    desc: Configure Vault with Kubernetes auth and secrets
+    cmds:
+      - |
+        if [ ! -f vault-init.json ]; then
+          echo "vault-init.json not found. Run 'task init:vault' first"
+          exit 1
+        fi
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault auth enable -path demo-auth-mount kubernetes"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        KUBE_HOST=$(kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR)
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault write auth/demo-auth-mount/config kubernetes_host=\"https://$KUBE_HOST:443\""
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault secrets enable -path=kvv2 kv-v2"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault kv put kvv2/webapp/config username=\"static-user\" password=\"static-password\""
+      - kubectl cp vault-ent/static-secrets/webapp.hcl vault-0:/tmp/webapp.hcl -n vault
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault policy write webapp /tmp/webapp.hcl"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault write auth/demo-auth-mount/role/static-secret \
+          alias_name_source=serviceaccount_name \
+          bound_service_account_names=static-app-sa \
+          bound_service_account_namespaces=app \
+          policies=webapp \
+          audience=vault \
+          token_period=120"
+      - task: config:vault:encrypted-cache
+
+  config:vault:encrypted-cache:
+    desc: Configure Vault transit engine for VSO encrypted client cache
+    cmds:
+      - |
+        if [ ! -f vault-init.json ]; then
+          echo "vault-init.json not found. Run 'task init:vault' first"
+          exit 1
+        fi
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault secrets enable -path=demo-transit transit"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault write -f demo-transit/keys/vso-client-cache"
+      - kubectl cp vault-ent/vso-transit-policy.hcl vault-0:/tmp/vso-transit-policy.hcl -n vault
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault policy write vso-transit /tmp/vso-transit-policy.hcl"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault write auth/demo-auth-mount/role/auth-role-operator \
+          alias_name_source=serviceaccount_name \
+          bound_service_account_names=vault-secrets-operator-controller-manager \
+          bound_service_account_namespaces=vault-secrets-operator \
+          policies=vso-transit \
+          audience=vault \
+          token_period=120"
+    ignore_error: false
+
+  uninstall:
+    cmds:
+      - task: uninstall:vso
+      - sleep 10
+      - task:  uninstall:vault
+
+  install:vso:
+    desc: Install Vault Secrets Operator with CSI driver enabled
+    cmds:
+      - |
+        helm upgrade --install vault-secrets-operator hashicorp/vault-secrets-operator \
+          -n vault-secrets-operator \
+          --create-namespace \
+          --set "csi.enabled=true" \
+          --values vault-ent/vault-operator-values.yaml
+      - kubectl wait --for=condition=ready pod --all -n vault-secrets-operator --timeout=5m
+
+  deploy:static-secret:
+    desc: Deploy static secret resources
+    cmds:
+      - kubectl create ns app
+      - kubectl apply -f vault-ent/vault-auth-static.yaml
+      - kubectl apply -f vault-ent/static-secret.yaml
+      - sleep 5
+
+  verify:static-secret:
+    desc: Verify the static secret was synced
+    cmds:
+      - |
+        echo "Username: $(kubectl get secrets -n app secretkv -o jsonpath='{.data.username}' | base64 -d)"
+        echo "Password: $(kubectl get secrets -n app secretkv -o jsonpath='{.data.password}' | base64 -d)"
+
+  verify:pods:
+    desc: Check all pods are in running state
+    cmds:
+      - kubectl get pods -A
+
+  rotate:static-secret:
+    desc: Rotate the static secret in Vault
+    cmds:
+      - |
+        if [ ! -f vault-init.json ]; then
+          echo "vault-init.json not found. Run 'task init:vault' first"
+          exit 1
+        fi
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault kv put kvv2/webapp/config username=\"static-user2\" password=\"static-password2\""
+      - sleep 5
+      - task: verify-static-secret
+
+  clean:
+    desc: Remove the minikube cluster
+    cmds:
+      - minikube delete
+
+  uninstall:vault:
+    desc: Uninstall Vault
+    cmds:
+      - helm uninstall vault -n vault || true
+      - kubectl delete pvc --all -n vault || true
+      - kubectl delete ns vault || true
+    ignore_error: true
+
+  uninstall:vso:
+    desc: Uninstall Vault Secrets Operator
+    cmds:
+      - kubectl delete deployment --all -n app || true
+      - kubectl delete deployment --all -n csi-app || true
+      - kubectl delete pods --all -n csi-app --force --grace-period=0 || true
+      - kubectl delete pods --all -n app --force --grace-period=0 || true
+      - kubectl delete vaultauth --all -n app || true
+      - kubectl delete vaultstaticsecret --all -n app || true
+      - kubectl delete vaultauth --all -n csi-app || true
+      - kubectl delete vaultpkisecret --all -n csi-app || true
+      - kubectl delete csisecrets --all -n csi-app || true
+      - kubectl delete vaultconnection --all -n csi-app || true
+      - helm uninstall vault-secrets-operator -n vault-secrets-operator || true
+      - kubectl delete ns app || true
+      - kubectl delete ns csi-app || true
+      - kubectl delete ns vault-secrets-operator || true
+
+  clean:namespaces:
+    desc: Delete application namespaces
+    cmds:
+      - kubectl delete ns app --ignore-not-found
+      - kubectl delete ns demo-ns --ignore-not-found
+
+  status:
+    desc: Check Vault status
+    cmds:
+      - |
+        if [ ! -f vault-init.json ]; then
+          kubectl exec vault-0 -n vault -- vault status
+        else
+          export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault status"
+        fi
+
+  logs:
+    desc: Follow Vault logs
+    cmds:
+      - kubectl logs -n vault -l app.kubernetes.io/name=vault -f
+
+  logs:vso:
+    desc: Follow Vault Secrets Operator logs
+    cmds:
+      - kubectl logs -n vault-secrets-operator -l app.kubernetes.io/name=vault-secrets-operator -f
+
+  port-forward:
+    desc: Port forward Vault to localhost:8200
+    cmds:
+      - kubectl port-forward -n vault vault-0 8200:8200
+
+  list:k8s-auth:
+    desc: Display all Kubernetes auth entities
+    cmds:
+      - |
+        if [ ! -f vault-init.json ]; then
+          echo "vault-init.json not found. Run 'task init:vault' first"
+          exit 1
+        fi
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        echo "=== Kubernetes Auth Methods ==="
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault auth list"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        echo "\n=== Kubernetes Auth Roles (demo-auth-mount) ==="
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault list auth/demo-auth-mount/role"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        echo "\n=== Kubernetes Auth Config (demo-auth-mount) ==="
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault read auth/demo-auth-mount/config"
+
+  list:identity-entities:
+    desc: Display all identity entities with detailed information
+    cmds:
+      - |
+        if [ ! -f vault-init.json ]; then
+          echo "vault-init.json not found. Run 'task init:vault' first"
+          exit 1
+        fi
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        echo "=== Identity Entities ==="
+        ENTITY_IDS=$(kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault list -format=json identity/entity/id" | jq -r '.[]')
+        if [ -z "$ENTITY_IDS" ]; then
+          echo "No entities found"
+        else
+          for id in $ENTITY_IDS; do
+            echo "\n--- Entity: $id ---"
+            kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault read identity/entity/id/$id"
+          done
+        fi
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        echo "\n=== Identity Entity Aliases ==="
+        ALIAS_IDS=$(kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault list -format=json identity/entity-alias/id" | jq -r '.[]')
+        if [ -z "$ALIAS_IDS" ]; then
+          echo "No entity aliases found"
+        else
+          for id in $ALIAS_IDS; do
+            echo "\n--- Entity Alias: $id ---"
+            kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault read identity/entity-alias/id/$id"
+          done
+        fi
+    silent: true
+
+  config:csi:
+    desc: Configure Vault for VSO CSI integration
+    cmds:
+      - |
+        if [ ! -f vault-init.json ]; then
+          echo "vault-init.json not found. Run 'task init:vault' first"
+          exit 1
+        fi
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault kv put kvv2/db-creds username=\"db-user\" password=\"db-secret-password\""
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault secrets enable pki || echo 'PKI already enabled'"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault secrets tune -max-lease-ttl=87600h pki"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault write -field=certificate pki/root/generate/internal \
+          common_name=\"example.com\" \
+          ttl=87600h"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault write pki/roles/example-dot-com \
+          allowed_domains=example.com \
+          allow_subdomains=true \
+          max_ttl=10m"
+      - kubectl cp vault-ent/csi/csi-policy.hcl vault-0:/tmp/csi-policy.hcl -n vault
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault policy write csi-policy /tmp/csi-policy.hcl"
+      - |
+        export VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault write auth/demo-auth-mount/role/csi-secret \
+          alias_name_source=serviceaccount_name \
+          bound_service_account_names=csi-app-sa \
+          bound_service_account_namespaces=csi-app \
+          policies=csi-policy \
+          audience=vault \
+          token_period=600"
+    ignore_error: true
+
+  deploy:csi:app:
+    desc: Deploy VSO CSI demo application with PKI certificates
+    cmds:
+      - kubectl create ns csi-app || true
+      - kubectl apply -f vault-ent/csi/service-account.yaml
+      - kubectl apply -f vault-ent/csi/vault-connection.yaml
+      - kubectl apply -f vault-ent/csi/vault-auth-csi.yaml
+      - kubectl apply -f vault-ent/csi/csi-secrets.yaml
+      - kubectl apply -f vault-ent/csi/tls-cert.yaml
+      - sleep 5
+      - kubectl apply -f vault-ent/csi/deployment.yaml
+      - sleep 5
+      - kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=csi-app --timeout=2m -n csi-app
+      - sleep 10
+
+  verify:csi:app:
+    desc: Verify VSO CSI secrets are mounted and display application logs
+    cmds:
+      - |
+        POD=$(kubectl get pod -l app=csi-app -o jsonpath="{.items[0].metadata.name}" -n csi-app)
+        echo "=== Application logs from pod csi-app/$POD ==="
+        kubectl logs -n csi-app $POD --tail=50
+
+  restart:csi:app:
+    desc: Rollout restart VSO CSI demo application
+    cmds:
+      - kubectl rollout restart deployment csi-app -n csi-app
+
+  events:
+    desc: minikube events
+    cmds:
+      - kubectl get events
+
+  ui:
+    cmds:
+      - jq -r '.root_token' vault-init.json | pbcopy
+      - open $VAULT_ADDR

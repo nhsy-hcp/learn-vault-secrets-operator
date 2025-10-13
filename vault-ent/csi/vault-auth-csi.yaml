@@ -1,0 +1,14 @@
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: csi-auth
+  namespace: csi-app
+spec:
+  vaultConnectionRef: default
+  method: kubernetes
+  mount: demo-auth-mount
+  kubernetes:
+    role: csi-secret
+    serviceAccount: csi-app-sa
+    audiences:
+      - vault
