@@ -1,0 +1,14 @@
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: dynamic-auth
+  namespace: dynamic-app
+spec:
+  method: kubernetes
+  mount: k8s-auth-mount
+  namespace: tn001
+  kubernetes:
+    role: dynamic-secret
+    serviceAccount: dynamic-app-sa
+    audiences:
+      - vault

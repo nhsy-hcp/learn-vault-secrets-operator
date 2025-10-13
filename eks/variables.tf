@@ -11,7 +11,7 @@ variable "vpc_cidr" {
 
 variable "eks_k8s_version" {
   type    = string
-  default = "1.32"
+  default = "1.34"
 }
 
 variable "eks_cluster_name" {

@@ -29,10 +29,9 @@ output "eks_cluster_kube_context" {
   value = "arn:aws:eks:${var.region}:${var.aws_account_id}:cluster/${var.eks_cluster_name}"
 }
 
-
-output "acm_certificate_arn" {
-  value = aws_acm_certificate.default.arn
-}
+# output "acm_certificate_arn" {
+#   value = aws_acm_certificate.default.arn
+# }
 
 output "echoserver_url" {
   value = "https://${local.echoserver_fqdn}"

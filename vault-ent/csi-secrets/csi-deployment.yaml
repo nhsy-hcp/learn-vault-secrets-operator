@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-app
+  namespace: csi-app
+  labels:
+    app: csi-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: csi-app
+  template:
+    metadata:
+      labels:
+        app: csi-app
+    spec:
+      serviceAccountName: csi-app-sa
+      containers:
+      - name: example
+        image: alpine:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          while true; do
+            echo "=== Database Credentials from VSO CSI Driver (Static Secrets) ==="
+            echo "Username: $(cat /secrets/static/static_secret_0_dbUsername)"
+            echo "Password: $(cat /secrets/static/static_secret_0_dbPassword)"
+            echo ""
+            echo "=== All mounted secrets in /secrets/static ==="
+            ls -la /secrets/static/
+            echo ""
+            echo "Waiting 10 minutes before next check... ($(date))"
+            echo ""          
+            sleep 600
+          done
+        volumeMounts:
+        - name: vso-csi-static
+          mountPath: "/secrets/static"
+          readOnly: true
+      volumes:
+      - name: vso-csi-static
+        csi:
+          driver: csi.vso.hashicorp.com
+          readOnly: true
+          volumeAttributes:
+            csiSecretsName: "csi-demo"
+            csiSecretsNamespace: "csi-app"

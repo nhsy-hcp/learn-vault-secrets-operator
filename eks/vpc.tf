@@ -7,15 +7,15 @@ module "vpc" {
   azs  = slice(data.aws_availability_zones.available.names, 0, 3)
 
   private_subnets = [
-    cidrsubnet(var.vpc_cidr, 8, 0),
-    cidrsubnet(var.vpc_cidr, 8, 1),
-    cidrsubnet(var.vpc_cidr, 8, 2)
+    cidrsubnet(var.vpc_cidr, 6, 0),
+    cidrsubnet(var.vpc_cidr, 6, 1),
+    cidrsubnet(var.vpc_cidr, 6, 2)
   ]
 
   public_subnets = [
-    cidrsubnet(var.vpc_cidr, 8, 4),
-    cidrsubnet(var.vpc_cidr, 8, 5),
-    cidrsubnet(var.vpc_cidr, 8, 6)
+    cidrsubnet(var.vpc_cidr, 6, 4),
+    cidrsubnet(var.vpc_cidr, 6, 5),
+    cidrsubnet(var.vpc_cidr, 6, 6)
   ]
 
   enable_nat_gateway   = true

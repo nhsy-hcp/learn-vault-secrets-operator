@@ -38,3 +38,6 @@ Thumbs.db
 
 # Task runner backups
 *.bak
+
+.env
+*.lic

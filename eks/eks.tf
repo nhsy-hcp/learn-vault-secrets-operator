@@ -43,26 +43,23 @@ module "eks" {
     coredns = {}
     eks-pod-identity-agent = {
       before_compute = true
-      # most_recent    = true
     }
-    kube-proxy = {
-      # most_recent = true
-    }
+    kube-proxy = {}
     vpc-cni = {
-      # most_recent    = true
       before_compute = true
-      # configuration_values = jsonencode({
-      #   env = {
-      #     # Reference docs https://docs.aws.amazon.com/eks/latest/userguide/cni-increase-ip-addresses.html
-      #     ENABLE_PREFIX_DELEGATION = "true"
-      #     WARM_PREFIX_TARGET       = "1"
-      #   }
-      # })
       pod_identity_association = [{
         role_arn        = module.aws_vpc_cni_ipv4_pod_identity.iam_role_arn
         service_account = "aws-node"
       }]
+      configuration_values = jsonencode({
+        env = {
+          ENABLE_PREFIX_DELEGATION = "true"
+          WARM_PREFIX_TARGET       = "1"
+          WARM_IP_TARGET           = "5"
+        }
+      })
     }
+    # removed to a separate resource to avoid race condition with coredns
     # aws-ebs-csi-driver = {
     #   depends_on = ["coredns"]
     #   # most_recent = true

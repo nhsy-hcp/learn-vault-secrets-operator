@@ -3,7 +3,7 @@ global:
 
 server:
   image:
-    tag: "1.19.5-ent"
+#    tag: "1.19.5-ent"
     repository: hashicorp/vault-enterprise
   affinity: ""
   enterpriseLicense:

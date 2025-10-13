@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dynamic-app
+  namespace: dynamic-app
+  labels:
+    app: dynamic-app
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: dynamic-app
+  template:
+    metadata:
+      labels:
+        app: dynamic-app
+    spec:
+      volumes:
+        - name: db-secrets
+          secret:
+            secretName: "vso-db-demo"
+        - name: pki-certs
+          secret:
+            secretName: "vso-pki-demo"
+      containers:
+        - name: example
+          image: alpine:latest
+          command: ["/bin/sh", "-c"]
+          args:
+          - |
+            apk add --no-cache openssl
+            while true; do
+              echo "=== Dynamic Database Credentials ==="
+              echo "Username: $DB_USERNAME"
+              echo "Password: $DB_PASSWORD"
+              echo ""
+              echo "=== PKI Certificate from VaultPKISecret ==="
+              if [ -f /secrets/tls/tls.crt ]; then
+                openssl x509 -in /secrets/tls/tls.crt -noout -text | grep -E "Subject:|Issuer:|Not Before:|Not After :|Serial Number:|DNS:"
+                echo ""
+                echo "=== Certificate Verification ==="
+                openssl x509 -in /secrets/tls/tls.crt -noout -subject -issuer
+              else
+                echo "PKI certificate not yet available, waiting..."
+              fi
+              echo ""
+              echo "=== All mounted database secrets in /secrets/static ==="
+              ls -la /secrets/static/
+              echo ""
+              echo "=== All mounted PKI certs in /secrets/tls ==="
+              ls -la /secrets/tls/
+              echo ""
+              echo "Waiting 10 minutes before next check... ($(date))"
+              echo ""
+              sleep 600
+            done
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "vso-db-demo"
+                  key: password
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: "vso-db-demo"
+                  key: username
+          volumeMounts:
+            - name: db-secrets
+              mountPath: /secrets/static
+              readOnly: true
+            - name: pki-certs
+              mountPath: /secrets/tls
+              readOnly: true
+#          resources:
+#            limits:
+#              cpu: "0.5"
+#              memory: "512Mi"
+#            requests:
+#              cpu: "250m"
+#              memory: "50Mi"

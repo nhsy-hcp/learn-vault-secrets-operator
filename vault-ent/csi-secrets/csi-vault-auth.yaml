@@ -4,9 +4,9 @@ metadata:
   name: csi-auth
   namespace: csi-app
 spec:
-  vaultConnectionRef: default
   method: kubernetes
-  mount: demo-auth-mount
+  mount: k8s-auth-mount
+  namespace: tn001
   kubernetes:
     role: csi-secret
     serviceAccount: csi-app-sa
