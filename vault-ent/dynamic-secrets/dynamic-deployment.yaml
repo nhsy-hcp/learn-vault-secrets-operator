@@ -31,27 +31,37 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
           - |
-            apk add --no-cache openssl
+            apk add --no-cache openssl postgresql-client
+            echo ""
             while true; do
-              echo "=== Dynamic Database Credentials ==="
+              echo "=== Dynamic Database Credentials from ENV ==="
               echo "Username: $DB_USERNAME"
               echo "Password: $DB_PASSWORD"
               echo ""
-              echo "=== PKI Certificate from VaultPKISecret ==="
-              if [ -f /secrets/tls/tls.crt ]; then
-                openssl x509 -in /secrets/tls/tls.crt -noout -text | grep -E "Subject:|Issuer:|Not Before:|Not After :|Serial Number:|DNS:"
+              echo "=== Testing Database Connection ==="
+              if PGPASSWORD="$DB_PASSWORD" psql -h postgres -p 5432 -U "$DB_USERNAME" -d postgres -c "SELECT current_database(), current_user, version();" 2>&1; then
+                echo "=== Database Connection Successful ==="
+                echo "Connection info:"
+                PGPASSWORD="$DB_PASSWORD" psql -h postgres -p 5432 -U "$DB_USERNAME" -d postgres -c "SELECT inet_server_addr() as server_ip, inet_server_port() as server_port, current_database() as database;"
+              else
+                echo "Database connection failed"
+              fi
+              echo ""
+              echo "=== PKI Certificate from file ==="
+              if [ -f /secrets/dynamic/tls/tls.crt ]; then
+                openssl x509 -in /secrets/dynamic/tls/tls.crt -noout -text | grep -E "Subject:|Issuer:|Not Before:|Not After :|Serial Number:|DNS:"
                 echo ""
                 echo "=== Certificate Verification ==="
-                openssl x509 -in /secrets/tls/tls.crt -noout -subject -issuer
+                openssl x509 -in /secrets/dynamic/tls/tls.crt -noout -subject -issuer
               else
                 echo "PKI certificate not yet available, waiting..."
               fi
               echo ""
-              echo "=== All mounted database secrets in /secrets/static ==="
-              ls -la /secrets/static/
+              echo "=== All mounted database secrets in /secrets/dynamic/db ==="
+              ls -la /secrets/dynamic/db/
               echo ""
-              echo "=== All mounted PKI certs in /secrets/tls ==="
-              ls -la /secrets/tls/
+              echo "=== All mounted PKI certs in /secrets/dynamic/tls ==="
+              ls -la /secrets/dynamic/tls/
               echo ""
               echo "Waiting 10 minutes before next check... ($(date))"
               echo ""
@@ -70,10 +80,10 @@ spec:
                   key: username
           volumeMounts:
             - name: db-secrets
-              mountPath: /secrets/static
+              mountPath: /secrets/dynamic/db
               readOnly: true
             - name: pki-certs
-              mountPath: /secrets/tls
+              mountPath: /secrets/dynamic/tls
               readOnly: true
 #          resources:
 #            limits:

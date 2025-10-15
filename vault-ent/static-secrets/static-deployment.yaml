@@ -30,17 +30,17 @@ spec:
           args:
           - |
             while true; do
-              echo "=== Static Secrets from VaultStaticSecret ==="
+              echo "=== Static Secrets from ENV ==="
               echo "Username: $USERNAME"
               echo "Password: $PASSWORD"
               echo ""
+              echo "=== Static Secrets from file ==="
+              echo "Username: $(cat /secrets/static/username 2>/dev/null)" || echo "username file not found"
+              echo "Password: $(cat /secrets/static/password 2>/dev/null)" || echo "password file not found"
+              echo ""
               echo "=== All mounted secrets in /secrets/static ==="
+              echo ""
               ls -la /secrets/static/
-              echo ""
-              echo "=== Secret Contents ==="
-              cat /secrets/static/username 2>/dev/null || echo "username file not found"
-              echo ""
-              cat /secrets/static/password 2>/dev/null || echo "password file not found"
               echo ""
               echo "Waiting 10 minutes before next check... ($(date))"
               echo ""            

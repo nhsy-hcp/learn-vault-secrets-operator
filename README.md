@@ -109,7 +109,7 @@ The project uses a centralized JWT token reviewer service account:
    - Dynamic database credentials from `db/creds/dev-postgres`
    - PKI certificates from `pki/issue/example-dot-com`
 4. Credentials are synced to Kubernetes `Secret` resources
-5. Application pod mounts database credentials to `/secrets/static` and PKI certificates to `/secrets/tls` volume mounts
+5. Application pod mounts database credentials to `/secrets/dynamic/db` and PKI certificates to `/secrets/dynamic/tls` volume mounts
 6. Credentials automatically rotate based on TTL
 
 #### CSI Driver Flow
