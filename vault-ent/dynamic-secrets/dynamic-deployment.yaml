@@ -9,7 +9,9 @@ spec:
   replicas: 3
   strategy:
     rollingUpdate:
-      maxUnavailable: 1
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
   selector:
     matchLabels:
       app: dynamic-app

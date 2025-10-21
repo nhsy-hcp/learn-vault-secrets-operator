@@ -4,7 +4,7 @@ vars:
   pki_max_ttl: "4h"
   postgresql_max_ttl: "24h"
   k8s_role_token_period: 3600
-  vault_version_tag: "1.19.9-ent"
+  vault_version_tag: "1.19.10-ent"
 
 dotenv:
   - .env
@@ -15,6 +15,10 @@ includes:
     taskfile: eks/Taskfile.yml
 
 tasks:
+  # ============================================================================
+  # Workflow Tasks (Composite)
+  # ============================================================================
+
   default:
     cmd: task --list
 
@@ -52,6 +56,10 @@ tasks:
       - task: verify:static-secret
       - task: verify:dynamic-secret
       - task: verify:csi-secret
+
+  # ============================================================================
+  # Prerequisites & Setup
+  # ============================================================================
 
   prerequisites:
     desc: Check for required tools
@@ -109,6 +117,10 @@ tasks:
     cmds:
       - minikube stop
 
+  # ============================================================================
+  # Vault Installation
+  # ============================================================================
+
   install:vault:
     desc: Install Vault using Helm
     preconditions:
@@ -158,6 +170,10 @@ tasks:
         echo "Vault unsealed successfully"
     silent: true
 
+  # ============================================================================
+  # Vault Configuration
+  # ============================================================================
+
   config:vault:
     desc: Configure Vault with Kubernetes auth and secrets
     preconditions:
@@ -169,6 +185,7 @@ tasks:
       - kubectl apply -f vault-ent/vault-jwt-service-account.yaml
       - kubectl apply -f vault-ent/vault-jwt-clusterrolebinding.yaml
       - kubectl apply -f vault-ent/vault-jwt-secret.yaml
+      - kubectl apply -f vault-ent/oidc-discovery-clusterrolebinding.yaml
       - sleep 5
     env:
       KUBE_HOST:
@@ -204,14 +221,74 @@ tasks:
         sh: cat vault-init.json | jq -r '.root_token'
     silent: true
 
-  uninstall:
+  config:static-secret:
     cmds:
-      - task: uninstall:vso
-      - sleep 3
-      - task:  uninstall:vault
-      - sleep 3
-      - task: clean:namespaces
-    silent: true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable -path=kvv2 kv-v2" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/webapp/config username=\"static-user\" password=\"static-password\""
+      - kubectl cp vault-ent/static-secrets/static-secret.hcl vault-0:/tmp/static-secret.hcl -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write static-secret /tmp/static-secret.hcl"
+      - kubectl cp vault-ent/csi-secrets/csi-secret.hcl vault-0:/tmp/csi-secret.hcl -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write csi-secret /tmp/csi-secret.hcl"
+      - kubectl cp vault-ent/dynamic-secrets/dynamic-secret.hcl vault-0:/tmp/dynamic-secret.hcl -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write dynamic-secret /tmp/dynamic-secret.hcl"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth enable -path k8s-auth-mount jwt" || true
+      - |
+        export ISSUER=$(kubectl get --raw /.well-known/openid-configuration | jq -r '.issuer')
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
+          oidc_discovery_url=\"$ISSUER\" \
+          oidc_discovery_ca_pem=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+          bound_issuer=\"$ISSUER\""
+      - kubectl cp vault-ent/static-secrets/shared-secret-role.json vault-0:/tmp/shared-secret-role.json -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/shared-secret @/tmp/shared-secret-role.json"
+      - kubectl create ns static-app || true
+    env:
+      KUBE_HOST:
+        sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
+  config:dynamic-secret:
+    preconditions:
+      - test -f vault-init.json
+    desc: Configure Vault for dynamic database secrets and PKI in tn001 namespace
+    cmds:
+      - kubectl create ns dynamic-app || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable -path=db database || echo 'Database secrets engine already enabled'"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable pki || echo 'PKI already enabled'"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets tune -max-lease-ttl=87600h pki"
+      - |
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write -field=certificate pki/root/generate/internal \
+          common_name=\"example.com\" \
+          ttl=87600h"
+      - |
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write pki/roles/example-dot-com \
+          allowed_domains=example.com \
+          allow_subdomains=true \
+          key_type=rsa \
+          key_bits=4096 \
+          ttl={{ .pki_max_ttl}} \
+          max_ttl={{ .pki_max_ttl}}"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read sys/mounts/pki/tune"
+    env:
+      KUBE_HOST:
+        sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
+  config:csi-secret:
+    preconditions:
+      - test -f vault-init.json
+    desc: Configure Vault for VSO CSI integration in tn001 namespace
+    cmds:
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/db-creds username=\"db-user\" password=\"db-secret-password\""
+      - kubectl create ns csi-app || true
+    env:
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
+  # ============================================================================
+  # VSO Installation
+  # ============================================================================
 
   install:vso:
     desc: Install Vault Secrets Operator with CSI driver enabled
@@ -226,32 +303,9 @@ tasks:
       - kubectl wait --for=condition=ready pod --all -n vault-secrets-operator --timeout=5m
     silent: true
 
-  config:static-secret:
-    cmds:
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth enable -path k8s-auth-mount kubernetes" || true
-      - |
-        TOKEN_REVIEWER_JWT=$(kubectl get secret vault-token-secret -n vault -o json | jq -r .data.token | base64 --decode)
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
-          kubernetes_host=\"https://$KUBE_HOST:443\" \
-          token_reviewer_jwt=\"$TOKEN_REVIEWER_JWT\""
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable -path=kvv2 kv-v2" || true
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/webapp/config username=\"static-user\" password=\"static-password\""
-      - kubectl cp vault-ent/static-secrets/static-secret.hcl vault-0:/tmp/static-secret.hcl -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write static-secret /tmp/static-secret.hcl"
-      - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/static-secret \
-          alias_name_source=serviceaccount_name \
-          bound_service_account_names=static-app-sa \
-          bound_service_account_namespaces=static-app \
-          policies=static-secret \
-          audience=vault \
-          token_period={{ .k8s_role_token_period }}"
-      - kubectl create ns static-app || true
-    env:
-      KUBE_HOST:
-        sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
-      VAULT_TOKEN:
-        sh: cat vault-init.json | jq -r '.root_token'
+  # ============================================================================
+  # Application Deployment
+  # ============================================================================
 
   deploy:static-secret:
     desc: Deploy static secret resources
@@ -293,6 +347,27 @@ tasks:
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
+
+  deploy:csi-secret:
+    desc: Deploy VSO CSI demo application
+    cmds:
+      - kubectl apply -f vault-ent/csi-secrets/csi-service-account.yaml
+      - kubectl apply -f vault-ent/csi-secrets/csi-vault-auth.yaml
+      - kubectl apply -f vault-ent/csi-secrets/csi-secret.yaml
+      - sleep 5
+      - kubectl apply -f vault-ent/csi-secrets/csi-deployment.yaml
+      - sleep 5
+      - kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=csi-app --timeout=2m -n csi-app
+      - sleep 10
+
+  # ============================================================================
+  # Verification
+  # ============================================================================
+
+  verify:pods:
+    desc: Check all pods are in running state
+    cmds:
+      - kubectl get pods -A
 
   verify:static-secret:
     desc: Verify the static secret was synced
@@ -339,10 +414,27 @@ tasks:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
 
-  verify:pods:
-    desc: Check all pods are in running state
+  verify:csi-secret:
+    preconditions:
+      - test -f vault-init.json
+    desc: Verify VSO CSI secrets are mounted and display application logs
     cmds:
-      - kubectl get pods -A
+      - echo "=== Verifying CSI resources ==="
+      - kubectl get csisecrets -n csi-app csi-demo -o yaml
+      - echo "\n=== Application logs from pod csi-app/$POD ==="
+      - kubectl logs -n csi-app $POD --tail=50
+      - echo "\n=== Verifying source secrets in Vault namespace tn001 ==="
+      - echo "\n--- KV Secret (kvv2/db-creds) ---"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv get kvv2/db-creds"
+    env:
+      POD:
+        sh: kubectl get pod -l app=csi-app -o jsonpath="{.items[0].metadata.name}" -n csi-app
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
+  # ============================================================================
+  # Operations
+  # ============================================================================
 
   rotate:static-secret:
     desc: Rotate the static secret in Vault
@@ -351,6 +443,24 @@ tasks:
         kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/webapp/config username=\"static-user-$RANDOM\" password=\"static-password-$RANDOM\""
       - sleep 5
       - task: verify:static-secret
+    env:
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
+  rotate:dynamic-secret:
+    desc: Rotate the dynamic database secret by revoking leases and restarting the deployment
+    cmds:
+      - echo "Revoking all database leases for dev-postgres role..."
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault lease revoke -prefix db/creds/dev-postgres"
+      - echo "Deleting Kubernetes secret to trigger VSO to fetch new credentials..."
+      - kubectl delete secret vso-db-demo -n dynamic-app --ignore-not-found
+      - echo "Waiting for VSO to recreate the secret with new credentials..."
+      - sleep 10
+      - echo "Restarting deployment to pick up new credentials..."
+      - kubectl rollout restart deployment dynamic-app -n dynamic-app
+      - kubectl rollout status deployment dynamic-app -n dynamic-app --timeout=2m
+      - sleep 5
+      - task: verify:dynamic-secret
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -366,50 +476,14 @@ tasks:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
 
-  clean:
-    desc: Remove the minikube cluster
+  restart:csi-secret:
+    desc: Rollout restart VSO CSI demo application
     cmds:
-      - minikube delete
-      - rm vault-init.json || true
+      - kubectl rollout restart deployment csi-app -n csi-app
 
-  uninstall:vault:
-    desc: Uninstall Vault
-    cmds:
-      - helm uninstall vault -n vault || true
-      - kubectl delete pvc --all -n vault --ignore-not-found
-
-      - kubectl delete ns vault || true
-      - rm vault-init.json || true
-
-  uninstall:vso:
-    desc: Uninstall Vault Secrets Operator
-    cmds:
-      - kubectl delete deployment --all -n csi-app --ignore-not-found
-      - kubectl delete deployment --all -n dynamic-app --ignore-not-found
-      - kubectl delete -f vault-ent/dynamic-secrets/postgres-deployment.yaml --ignore-not-found
-      - kubectl delete pvc --all -n dynamic-app --ignore-not-found
-      - kubectl delete deployment --all -n static-app --ignore-not-found
-      - kubectl delete pods --all -n csi-app --force --ignore-not-found
-      - kubectl delete pods --all -n static-app --force --ignore-not-found
-      - kubectl delete pods --all -n dynamic-app --force --ignore-not-found
-      - kubectl delete vaultstaticsecret --all -n static-app --ignore-not-found || true
-      - kubectl delete vaultauth --all -n csi-app --ignore-not-found || true
-      - kubectl delete csisecrets --all -n csi-app --ignore-not-found || true
-      - kubectl delete vaultconnection --all -n csi-app --ignore-not-found || true
-      - kubectl delete vaultauth --all -n dynamic-app --ignore-not-found || true
-      - kubectl delete vaultdynamicsecret --all -n dynamic-app --ignore-not-found || true
-      - kubectl delete vaultpkisecret --all -n dynamic-app --ignore-not-found || true
-      - kubectl delete vaultauth --all -n static-app --ignore-not-found || true
-      - helm uninstall vault-secrets-operator -n vault-secrets-operator --ignore-not-found
-
-  clean:namespaces:
-    desc: Delete application namespaces
-    cmds:
-      - kubectl delete ns static-app --ignore-not-found
-      - kubectl delete ns dynamic-app --ignore-not-found
-      - kubectl delete ns csi-app --ignore-not-found
-      - kubectl delete ns vault-secrets-operator --ignore-not-found
-      - kubectl delete ns vault --ignore-not-found
+  # ============================================================================
+  # Debugging & Monitoring
+  # ============================================================================
 
   status:
     desc: Check Vault status
@@ -484,100 +558,6 @@ tasks:
         sh: cat vault-init.json | jq -r '.root_token'
     silent: true
 
-  config:csi-secret:
-    preconditions:
-      - test -f vault-init.json
-    desc: Configure Vault for VSO CSI integration in tn001 namespace
-    cmds:
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/db-creds username=\"db-user\" password=\"db-secret-password\""
-      - kubectl cp vault-ent/csi-secrets/csi-policy.hcl vault-0:/tmp/csi-policy.hcl -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write csi-policy /tmp/csi-policy.hcl"
-      - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/csi-secret \
-          alias_name_source=serviceaccount_name \
-          bound_service_account_names=csi-app-sa \
-          bound_service_account_namespaces=csi-app \
-          policies=csi-policy \
-          audience=vault \
-          token_period={{ .k8s_role_token_period }}"
-      - kubectl create ns csi-app
-    env:
-      VAULT_TOKEN:
-        sh: cat vault-init.json | jq -r '.root_token'
-
-  config:dynamic-secret:
-    preconditions:
-      - test -f vault-init.json
-    desc: Configure Vault for dynamic database secrets and PKI in tn001 namespace
-    cmds:
-      - kubectl create ns dynamic-app || true
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable -path=db database || echo 'Database secrets engine already enabled'"
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable pki || echo 'PKI already enabled'"
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets tune -max-lease-ttl=87600h pki"
-      - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write -field=certificate pki/root/generate/internal \
-          common_name=\"example.com\" \
-          ttl=87600h"
-      - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write pki/roles/example-dot-com \
-          allowed_domains=example.com \
-          allow_subdomains=true \
-          key_type=rsa \
-          key_bits=4096 \
-          ttl={{ .pki_max_ttl}} \
-          max_ttl={{ .pki_max_ttl}}"
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read sys/mounts/pki/tune"
-      - kubectl cp vault-ent/dynamic-secrets/dynamic-secret.hcl vault-0:/tmp/dynamic-secret.hcl -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write dynamic-secret /tmp/dynamic-secret.hcl"
-      - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/dynamic-secret \
-          alias_name_source=serviceaccount_name \
-          bound_service_account_names=dynamic-app-sa \
-          bound_service_account_namespaces=dynamic-app \
-          policies=dynamic-secret \
-          audience=vault \
-          token_period={{ .k8s_role_token_period }}"
-    env:
-      KUBE_HOST:
-        sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
-      VAULT_TOKEN:
-        sh: cat vault-init.json | jq -r '.root_token'
-
-  deploy:csi-secret:
-    desc: Deploy VSO CSI demo application
-    cmds:
-      - kubectl apply -f vault-ent/csi-secrets/csi-service-account.yaml
-      - kubectl apply -f vault-ent/csi-secrets/csi-vault-auth.yaml
-      - kubectl apply -f vault-ent/csi-secrets/csi-secrets.yaml
-      - sleep 5
-      - kubectl apply -f vault-ent/csi-secrets/csi-deployment.yaml
-      - sleep 5
-      - kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=csi-app --timeout=2m -n csi-app
-      - sleep 10
-
-  verify:csi-secret:
-    preconditions:
-      - test -f vault-init.json
-    desc: Verify VSO CSI secrets are mounted and display application logs
-    cmds:
-      - echo "=== Verifying CSI resources ==="
-      - kubectl get csisecrets -n csi-app csi-demo -o yaml
-      - echo "\n=== Application logs from pod csi-app/$POD ==="
-      - kubectl logs -n csi-app $POD --tail=50
-      - echo "\n=== Verifying source secrets in Vault namespace tn001 ==="
-      - echo "\n--- KV Secret (kvv2/db-creds) ---"
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv get kvv2/db-creds"
-    env:
-      POD:
-        sh: kubectl get pod -l app=csi-app -o jsonpath="{.items[0].metadata.name}" -n csi-app
-      VAULT_TOKEN:
-        sh: cat vault-init.json | jq -r '.root_token'
-
-  restart:csi-secret:
-    desc: Rollout restart VSO CSI demo application
-    cmds:
-      - kubectl rollout restart deployment csi-app -n csi-app
-
   events:
     desc: minikube events
     cmds:
@@ -587,3 +567,77 @@ tasks:
     cmds:
       - jq -r '.root_token' vault-init.json | pbcopy
       - open $VAULT_ADDR
+
+  # ============================================================================
+  # Uninstallation
+  # ============================================================================
+
+  uninstall:
+    cmds:
+      - task: uninstall:apps
+      - task: uninstall:vso
+      - sleep 3
+      - task:  uninstall:vault
+      - sleep 3
+      - task: clean:namespaces
+    silent: true
+
+  uninstall:vault:
+    desc: Uninstall Vault
+    cmds:
+      - helm uninstall vault -n vault || true
+      - kubectl delete pvc --all -n vault --ignore-not-found
+
+      - kubectl delete ns vault || true
+      - rm vault-init.json || true
+
+  uninstall:vso:
+    desc: Uninstall Vault Secrets Operator
+    cmds:
+      - helm uninstall vault-secrets-operator -n vault-secrets-operator --ignore-not-found
+
+  uninstall:apps:
+    desc: Uninstall k8s apps
+    cmds:
+      - kubectl delete deployment --all -n csi-app --ignore-not-found
+      - kubectl delete deployment --all -n dynamic-app --ignore-not-found
+      - kubectl delete -f vault-ent/dynamic-secrets/postgres-deployment.yaml --ignore-not-found
+      - kubectl delete pvc --all -n dynamic-app --ignore-not-found
+      - kubectl delete deployment --all -n static-app --ignore-not-found
+      - kubectl delete pods --all -n csi-app --force --ignore-not-found
+      - kubectl delete pods --all -n static-app --force --ignore-not-found
+      - kubectl delete pods --all -n dynamic-app --force --ignore-not-found
+      - kubectl delete vaultstaticsecret --all -n static-app --ignore-not-found || true
+      - kubectl delete vaultauth --all -n csi-app --ignore-not-found || true
+      - kubectl delete csisecrets --all -n csi-app --ignore-not-found || true
+      - kubectl delete vaultconnection --all -n csi-app --ignore-not-found || true
+      - kubectl delete vaultauth --all -n dynamic-app --ignore-not-found || true
+      - kubectl delete vaultdynamicsecret --all -n dynamic-app --ignore-not-found || true
+      - kubectl delete vaultpkisecret --all -n dynamic-app --ignore-not-found || true
+      - kubectl delete vaultauth --all -n static-app --ignore-not-found || true
+      - sleep 5
+      - kubectl delete ns static-app --ignore-not-found
+      - kubectl delete ns dynamic-app --ignore-not-found
+      - kubectl delete ns csi-app --ignore-not-found
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable k8s-auth-mount" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable db" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable pki" || true
+    env:
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
+  # ============================================================================
+  # Cleanup
+  # ============================================================================
+
+  clean:
+    desc: Remove the minikube cluster
+    cmds:
+      - minikube delete
+      - rm vault-init.json || true
+
+  clean:namespaces:
+    desc: Delete application namespaces
+    cmds:
+      - kubectl delete ns vault-secrets-operator --ignore-not-found
+      - kubectl delete ns vault --ignore-not-found

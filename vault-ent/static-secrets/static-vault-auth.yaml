@@ -8,7 +8,7 @@ spec:
   mount: k8s-auth-mount
   namespace: tn001
   kubernetes:
-    role: static-secret
-    serviceAccount: static-app-sa
+    role: shared-secret
+    serviceAccount: shared-app-sa
     audiences:
       - vault

@@ -18,7 +18,6 @@ spec:
       labels:
         app: static-app
     spec:
-      serviceAccountName: static-app-sa
       volumes:
         - name: static-secrets
           secret:
