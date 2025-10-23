@@ -4,10 +4,10 @@ metadata:
   name: dynamic-auth
   namespace: dynamic-app
 spec:
-  method: kubernetes
+  method: jwt
   mount: k8s-auth-mount
   namespace: tn001
-  kubernetes:
+  jwt:
     role: shared-secret
     serviceAccount: shared-app-sa
     audiences:

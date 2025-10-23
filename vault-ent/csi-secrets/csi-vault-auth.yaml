@@ -4,10 +4,10 @@ metadata:
   name: csi-auth
   namespace: csi-app
 spec:
-  method: kubernetes
+  method: jwt
   mount: k8s-auth-mount
   namespace: tn001
-  kubernetes:
+  jwt:
     role: shared-secret
     serviceAccount: shared-app-sa
     audiences:

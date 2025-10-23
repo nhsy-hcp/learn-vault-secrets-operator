@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: static-app
-  namespace: static-app
+  namespace: ${APP_NAME}
   labels:
     app: static-app
 spec:
@@ -18,6 +18,7 @@ spec:
       labels:
         app: static-app
     spec:
+      serviceAccountName: shared-app-sa
       volumes:
         - name: static-secrets
           secret:
@@ -42,7 +43,7 @@ spec:
               ls -la /secrets/static/
               echo ""
               echo "Waiting 10 minutes before next check... ($(date))"
-              echo ""            
+              echo ""
               sleep 600
             done
           env:

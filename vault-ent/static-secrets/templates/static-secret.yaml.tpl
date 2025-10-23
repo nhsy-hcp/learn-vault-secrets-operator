@@ -2,7 +2,7 @@ apiVersion: secrets.hashicorp.com/v1beta1
 kind: VaultStaticSecret
 metadata:
   name: vault-kv-app
-  namespace: static-app
+  namespace: ${APP_NAME}
 spec:
   # vaultConnectionRef: static-app/static-default
   type: kv-v2

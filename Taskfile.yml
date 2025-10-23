@@ -4,7 +4,8 @@ vars:
   pki_max_ttl: "4h"
   postgresql_max_ttl: "24h"
   k8s_role_token_period: 3600
-  vault_version_tag: "1.19.10-ent"
+  vault_version_tag: "1.21-ent"
+  static_apps: "static1,static2,static3"
 
 dotenv:
   - .env
@@ -234,13 +235,24 @@ tasks:
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth enable -path k8s-auth-mount jwt" || true
       - |
         export ISSUER=$(kubectl get --raw /.well-known/openid-configuration | jq -r '.issuer')
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
-          oidc_discovery_url=\"$ISSUER\" \
-          oidc_discovery_ca_pem=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
-          bound_issuer=\"$ISSUER\""
+        if kubectl config current-context | grep -q minikube; then
+          echo "Detected minikube cluster - using kubernetes service account CA"
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
+            oidc_discovery_url=\"$ISSUER\" \
+            oidc_discovery_ca_pem=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            bound_issuer=\"$ISSUER\""
+        else
+          echo "Detected non-minikube cluster (EKS/GKE/etc) - using system CA bundle for public OIDC endpoint"
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
+            oidc_discovery_url=\"$ISSUER\" \
+            bound_issuer=\"$ISSUER\""
+        fi
       - kubectl cp vault-ent/static-secrets/shared-secret-role.json vault-0:/tmp/shared-secret-role.json -n vault
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/shared-secret @/tmp/shared-secret-role.json"
-      - kubectl create ns static-app || true
+      - |
+        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
+          kubectl create ns "${app}-app" || true
+        done
     env:
       KUBE_HOST:
         sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
@@ -308,15 +320,27 @@ tasks:
   # ============================================================================
 
   deploy:static-secret:
-    desc: Deploy static secret resources
+    desc: Deploy static secret resources for all app instances
     cmds:
-      - kubectl apply -f vault-ent/static-secrets/static-service-account.yaml
-      - kubectl apply -f vault-ent/static-secrets/static-vault-auth.yaml
-      - kubectl apply -f vault-ent/static-secrets/static-secret.yaml
+      - |
+        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
+          APP_NAME="${app}-app"
+          echo "Deploying ${APP_NAME}..."
+
+          # Generate manifests from templates
+          sed "s/\${APP_NAME}/${APP_NAME}/g" vault-ent/static-secrets/templates/service-account.yaml.tpl | kubectl apply -f -
+          sed "s/\${APP_NAME}/${APP_NAME}/g" vault-ent/static-secrets/templates/vault-auth.yaml.tpl | kubectl apply -f -
+          sed "s/\${APP_NAME}/${APP_NAME}/g" vault-ent/static-secrets/templates/static-secret.yaml.tpl | kubectl apply -f -
+          sleep 5
+          sed "s/\${APP_NAME}/${APP_NAME}/g" vault-ent/static-secrets/templates/deployment.yaml.tpl | kubectl apply -f -
+        done
       - sleep 5
-      - kubectl apply -f vault-ent/static-secrets/static-deployment.yaml
-      - sleep 5
-      - kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=static-app --timeout=2m -n static-app
+      - |
+        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
+          APP_NAME="${app}-app"
+          echo "Waiting for ${APP_NAME} pods to be ready..."
+          kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=static-app --timeout=2m -n "${APP_NAME}"
+        done
 
   deploy:dynamic-secret:
     desc: Deploy dynamic secret resources with PKI certificates
@@ -370,18 +394,25 @@ tasks:
       - kubectl get pods -A
 
   verify:static-secret:
-    desc: Verify the static secret was synced
+    desc: Verify the static secret was synced for all app instances
     cmds:
-      - echo "=== Verifying VaultStaticSecret resource ==="
-      - kubectl get vaultstaticsecret -n static-app vault-kv-app -o yaml
-      - echo "\n=== Verifying Kubernetes secret created by VSO ==="
-      - kubectl get secret -n static-app secretkv -o yaml
-      - echo "\n=== Decoding secret values ==="
       - |
-        echo "Username: $(kubectl get secrets -n static-app secretkv -o jsonpath='{.data.username}' | base64 -d)"
-        echo "Password: $(kubectl get secrets -n static-app secretkv -o jsonpath='{.data.password}' | base64 -d)"
-        echo "\n=== Verifying source secret in Vault namespace tn001 ==="
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv get kvv2/webapp/config"
+        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
+          APP_NAME="${app}-app"
+          echo "=== Verifying ${APP_NAME} ==="
+          echo "=== Verifying VaultStaticSecret resource ==="
+          kubectl get vaultstaticsecret -n "${APP_NAME}" vault-kv-app -o yaml
+          echo ""
+          echo "=== Verifying Kubernetes secret created by VSO ==="
+          kubectl get secret -n "${APP_NAME}" secretkv -o yaml
+          echo ""
+          echo "=== Decoding secret values ==="
+          echo "Username: $(kubectl get secrets -n ${APP_NAME} secretkv -o jsonpath='{.data.username}' | base64 -d)"
+          echo "Password: $(kubectl get secrets -n ${APP_NAME} secretkv -o jsonpath='{.data.password}' | base64 -d)"
+          echo ""
+        done
+      - echo "=== Verifying source secret in Vault namespace tn001 ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv get kvv2/webapp/config"
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -563,9 +594,13 @@ tasks:
     cmds:
       - kubectl get events
 
-  ui:
+  token:
     cmds:
       - jq -r '.root_token' vault-init.json | pbcopy
+
+  ui:
+    cmds:
+      - task: token
       - open $VAULT_ADDR
 
   # ============================================================================
@@ -603,20 +638,29 @@ tasks:
       - kubectl delete deployment --all -n dynamic-app --ignore-not-found
       - kubectl delete -f vault-ent/dynamic-secrets/postgres-deployment.yaml --ignore-not-found
       - kubectl delete pvc --all -n dynamic-app --ignore-not-found
-      - kubectl delete deployment --all -n static-app --ignore-not-found
       - kubectl delete pods --all -n csi-app --force --ignore-not-found
-      - kubectl delete pods --all -n static-app --force --ignore-not-found
       - kubectl delete pods --all -n dynamic-app --force --ignore-not-found
-      - kubectl delete vaultstaticsecret --all -n static-app --ignore-not-found || true
       - kubectl delete vaultauth --all -n csi-app --ignore-not-found || true
       - kubectl delete csisecrets --all -n csi-app --ignore-not-found || true
       - kubectl delete vaultconnection --all -n csi-app --ignore-not-found || true
       - kubectl delete vaultauth --all -n dynamic-app --ignore-not-found || true
       - kubectl delete vaultdynamicsecret --all -n dynamic-app --ignore-not-found || true
       - kubectl delete vaultpkisecret --all -n dynamic-app --ignore-not-found || true
-      - kubectl delete vaultauth --all -n static-app --ignore-not-found || true
+      - |
+        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
+          APP_NAME="${app}-app"
+          echo "Cleaning up ${APP_NAME}..."
+          kubectl delete deployment --all -n "${APP_NAME}" --ignore-not-found
+          kubectl delete pods --all -n "${APP_NAME}" --force --ignore-not-found
+          kubectl delete vaultstaticsecret --all -n "${APP_NAME}" --ignore-not-found || true
+          kubectl delete vaultauth --all -n "${APP_NAME}" --ignore-not-found || true
+        done
       - sleep 5
-      - kubectl delete ns static-app --ignore-not-found
+      - |
+        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
+          APP_NAME="${app}-app"
+          kubectl delete ns "${APP_NAME}" --ignore-not-found
+        done
       - kubectl delete ns dynamic-app --ignore-not-found
       - kubectl delete ns csi-app --ignore-not-found
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable k8s-auth-mount" || true

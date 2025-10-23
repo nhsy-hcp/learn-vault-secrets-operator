@@ -2,12 +2,12 @@ apiVersion: secrets.hashicorp.com/v1beta1
 kind: VaultAuth
 metadata:
   name: static-auth
-  namespace: static-app
+  namespace: ${APP_NAME}
 spec:
-  method: kubernetes
+  method: jwt
   mount: k8s-auth-mount
   namespace: tn001
-  kubernetes:
+  jwt:
     role: shared-secret
     serviceAccount: shared-app-sa
     audiences:
