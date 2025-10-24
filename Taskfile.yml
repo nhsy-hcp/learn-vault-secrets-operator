@@ -5,7 +5,7 @@ vars:
   postgresql_max_ttl: "24h"
   k8s_role_token_period: 3600
   vault_version_tag: "1.21-ent"
-  static_apps: "static1,static2,static3"
+  static_app_count: 3
 
 dotenv:
   - .env
@@ -228,10 +228,6 @@ tasks:
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/webapp/config username=\"static-user\" password=\"static-password\""
       - kubectl cp vault-ent/static-secrets/static-secret.hcl vault-0:/tmp/static-secret.hcl -n vault
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write static-secret /tmp/static-secret.hcl"
-      - kubectl cp vault-ent/csi-secrets/csi-secret.hcl vault-0:/tmp/csi-secret.hcl -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write csi-secret /tmp/csi-secret.hcl"
-      - kubectl cp vault-ent/dynamic-secrets/dynamic-secret.hcl vault-0:/tmp/dynamic-secret.hcl -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write dynamic-secret /tmp/dynamic-secret.hcl"
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth enable -path k8s-auth-mount jwt" || true
       - |
         export ISSUER=$(kubectl get --raw /.well-known/openid-configuration | jq -r '.issuer')
@@ -247,11 +243,11 @@ tasks:
             oidc_discovery_url=\"$ISSUER\" \
             bound_issuer=\"$ISSUER\""
         fi
-      - kubectl cp vault-ent/static-secrets/shared-secret-role.json vault-0:/tmp/shared-secret-role.json -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/shared-secret @/tmp/shared-secret-role.json"
+      - kubectl cp vault-ent/static-secrets/static-secret-role.json vault-0:/tmp/static-secret-role.json -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/static-secret @/tmp/static-secret-role.json"
       - |
-        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
-          kubectl create ns "${app}-app" || true
+        for i in $(seq 1 {{ .static_app_count }}); do
+          kubectl create ns "static-app-${i}" || true
         done
     env:
       KUBE_HOST:
@@ -281,6 +277,10 @@ tasks:
           ttl={{ .pki_max_ttl}} \
           max_ttl={{ .pki_max_ttl}}"
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read sys/mounts/pki/tune"
+      - kubectl cp vault-ent/dynamic-secrets/dynamic-secret.hcl vault-0:/tmp/dynamic-secret.hcl -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write dynamic-secret /tmp/dynamic-secret.hcl"
+      - kubectl cp vault-ent/dynamic-secrets/dynamic-secret-role.json vault-0:/tmp/dynamic-secret-role.json -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/dynamic-secret @/tmp/dynamic-secret-role.json"
     env:
       KUBE_HOST:
         sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
@@ -294,6 +294,10 @@ tasks:
     cmds:
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/db-creds username=\"db-user\" password=\"db-secret-password\""
       - kubectl create ns csi-app || true
+      - kubectl cp vault-ent/csi-secrets/csi-secret.hcl vault-0:/tmp/csi-secret.hcl -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write csi-secret /tmp/csi-secret.hcl"
+      - kubectl cp vault-ent/csi-secrets/csi-secret-role.json vault-0:/tmp/csi-secret-role.json -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/csi-secret @/tmp/csi-secret-role.json"
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -323,8 +327,8 @@ tasks:
     desc: Deploy static secret resources for all app instances
     cmds:
       - |
-        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
-          APP_NAME="${app}-app"
+        for i in $(seq 1 {{ .static_app_count }}); do
+          APP_NAME="static-app-${i}"
           echo "Deploying ${APP_NAME}..."
 
           # Generate manifests from templates
@@ -336,8 +340,8 @@ tasks:
         done
       - sleep 5
       - |
-        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
-          APP_NAME="${app}-app"
+        for i in $(seq 1 {{ .static_app_count }}); do
+          APP_NAME="static-app-${i}"
           echo "Waiting for ${APP_NAME} pods to be ready..."
           kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=static-app --timeout=2m -n "${APP_NAME}"
         done
@@ -397,8 +401,8 @@ tasks:
     desc: Verify the static secret was synced for all app instances
     cmds:
       - |
-        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
-          APP_NAME="${app}-app"
+        for i in $(seq 1 {{ .static_app_count }}); do
+          APP_NAME="static-app-${i}"
           echo "=== Verifying ${APP_NAME} ==="
           echo "=== Verifying VaultStaticSecret resource ==="
           kubectl get vaultstaticsecret -n "${APP_NAME}" vault-kv-app -o yaml
@@ -647,8 +651,8 @@ tasks:
       - kubectl delete vaultdynamicsecret --all -n dynamic-app --ignore-not-found || true
       - kubectl delete vaultpkisecret --all -n dynamic-app --ignore-not-found || true
       - |
-        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
-          APP_NAME="${app}-app"
+        for i in $(seq 1 {{ .static_app_count }}); do
+          APP_NAME="static-app-${i}"
           echo "Cleaning up ${APP_NAME}..."
           kubectl delete deployment --all -n "${APP_NAME}" --ignore-not-found
           kubectl delete pods --all -n "${APP_NAME}" --force --ignore-not-found
@@ -657,8 +661,8 @@ tasks:
         done
       - sleep 5
       - |
-        for app in $(echo "{{ .static_apps }}" | tr ',' ' '); do
-          APP_NAME="${app}-app"
+        for i in $(seq 1 {{ .static_app_count }}); do
+          APP_NAME="static-app-${i}"
           kubectl delete ns "${APP_NAME}" --ignore-not-found
         done
       - kubectl delete ns dynamic-app --ignore-not-found

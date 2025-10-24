@@ -15,7 +15,7 @@ spec:
       labels:
         app: csi-app
     spec:
-      serviceAccountName: shared-app-sa
+      serviceAccountName: csi-app-sa
       containers:
       - name: example
         image: alpine:latest

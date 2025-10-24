@@ -8,7 +8,7 @@ spec:
   mount: k8s-auth-mount
   namespace: tn001
   jwt:
-    role: shared-secret
-    serviceAccount: shared-app-sa
+    role: csi-secret
+    serviceAccount: csi-app-sa
     audiences:
       - vault
