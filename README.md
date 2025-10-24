@@ -77,34 +77,42 @@ task verify
 
 ## Architecture
 
-### Architecture Diagram
-![architectire diagram](diagram.png)
+### Architecture Diagram #TODO
+![architecture diagram](diagram.png)
 
 
 ### Authentication Model
 
-The project uses a centralized JWT token reviewer service account:
+The project uses a centralized JWT token reviewer service account with dedicated Vault roles per application type:
 
 - Service Account: `vault-token-reviewer` in `vault` namespace
 - ClusterRoleBinding: `vault-reviewer-binding` with `system:auth-delegator` role
 - Token Secret: `vault-jwt-secret` (long-lived service account token)
 - All Kubernetes auth mounts use this token for authentication
 
+#### Role Architecture
+Each application type has a dedicated Vault role with specific policies and service account bindings:
+- **Static Secrets**: Role `static-secret` with policy `static-secret`, service account `static-app-sa`
+  - Uses glob pattern matching for namespaces (`static-app-*`) to support multiple static app instances
+- **Dynamic Secrets**: Role `dynamic-secret` with policy `dynamic-secret`, service account `dynamic-app-sa`
+- **CSI Integration**: Role `csi-secret` with policy `csi-secret`, service account `csi-app-sa`
+
 #### Authentication Flow
 1. **JWT Token Reviewer**: A centralized service account with `system:auth-delegator` permissions provides a long-lived JWT token
 2. **All Kubernetes auth mounts** in Vault (both `vso` and `tn001` namespaces) use this token for token review operations
-3. **Application service accounts** authenticate to Vault using their own service account tokens, which Vault validates using the JWT token reviewer
+3. **Application service accounts** authenticate to Vault using their own service account tokens with dedicated roles, which Vault validates using the JWT token reviewer
 
 #### Static Secrets Flow
-1. VSO controller watches `VaultStaticSecret` resources
-2. Application service account (`static-app-sa`) authenticates via `VaultAuth` to Vault's `k8s-auth-mount` in `tn001` namespace
-3. VSO reads secrets from `kvv2/webapp/config` path
-4. Secrets are synced to Kubernetes `Secret` resource (`secretkv`)
-5. Application pod mounts the secret as environment variables and to `/secrets/static` volume mount
+1. VSO controller watches `VaultStaticSecret` resources across multiple static app instances
+2. Application service account (`static-app-sa`) in each namespace (`static-app-1`, `static-app-2`, `static-app-3`) authenticates via `VaultAuth` to Vault's `k8s-auth-mount` in `tn001` namespace using the `static-secret` role
+3. The `static-secret` role uses glob pattern matching (`static-app-*`) to authorize all static app instances
+4. VSO reads secrets from `kvv2/webapp/config` path
+5. Secrets are synced to Kubernetes `Secret` resource (`secretkv`) in each namespace
+6. Application pod mounts the secret as environment variables and to `/secrets/static` volume mount
 
 #### Dynamic Secrets Flow
 1. VSO controller watches `VaultDynamicSecret` resources
-2. Application service account (`dynamic-app-sa`) authenticates via `VaultAuth`
+2. Application service account (`dynamic-app-sa`) in `dynamic-app` namespace authenticates via `VaultAuth` to Vault's `k8s-auth-mount` in `tn001` namespace using the `dynamic-secret` role
 3. VSO requests:
    - Dynamic database credentials from `db/creds/dev-postgres`
    - PKI certificates from `pki/issue/example-dot-com`
@@ -115,7 +123,7 @@ The project uses a centralized JWT token reviewer service account:
 #### CSI Driver Flow
 1. Application pod defines CSI volume with `SecretProviderClass`
 2. CSI node driver intercepts mount request
-3. Application service account (`csi-app-sa`) authenticates to Vault
+3. Application service account (`csi-app-sa`) in `csi-app` namespace authenticates to Vault's `k8s-auth-mount` in `tn001` namespace using the `csi-secret` role
 4. Vault CSI Provider fetches secrets from `kvv2/db-creds`
 5. Secrets are mounted directly to pod filesystem at `/secrets/static`
 6. No Kubernetes `Secret` resource is created
@@ -129,7 +137,7 @@ The project uses a centralized JWT token reviewer service account:
 
 - `vault` - Vault and CSI provider pods
 - `vault-secrets-operator` - VSO controller
-- `static-app` - Static KV secrets demonstration
+- `static-app-1`, `static-app-2`, `static-app-3` - Multiple static KV secrets demonstration instances (configurable count)
 - `dynamic-app` - Dynamic database and PKI secrets demonstration
 - `csi-app` - CSI driver integration demonstration
 
@@ -143,15 +151,16 @@ The project uses a centralized JWT token reviewer service account:
 - Namespace: `tn001`
 - Mount: `kvv2`
 - Path: `kvv2/webapp/config`
-- Auth role: `static-secret`
-- Service account: `static-app-sa`
+- Auth role: `static-secret` (dedicated role with `static-secret` policy only)
+- Service account: `static-app-sa` (in namespaces `static-app-1`, `static-app-2`, `static-app-3`)
+- Bound claims: Uses glob pattern `static-app-*` to authorize multiple instances
 
 **Dynamic Database Secrets:**
 - Namespace: `tn001`
 - Mount: `db`
 - Path: `creds/dev-postgres`
-- Auth role: `dynamic-secret`
-- Service account: `dynamic-app-sa`
+- Auth role: `dynamic-secret` (dedicated role with `dynamic-secret` policy only)
+- Service account: `dynamic-app-sa` (in namespace `dynamic-app`)
 - PostgreSQL deployment included
 
 **PKI Secrets:**
@@ -163,8 +172,8 @@ The project uses a centralized JWT token reviewer service account:
 - Namespace: `tn001`
 - Mount: `kvv2`
 - Path: `db-creds`
-- Auth role: `csi-secret`
-- Service account: `csi-app-sa`
+- Auth role: `csi-secret` (dedicated role with `csi-secret` policy only)
+- Service account: `csi-app-sa` (in namespace `csi-app`)
 
 **Encrypted Client Cache:**
 - Namespace: `vso`
