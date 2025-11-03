@@ -1,3 +1,5 @@
+# https://taskfile.dev
+
 version: '3'
 
 tasks:
@@ -86,9 +88,10 @@ tasks:
       - task: init
       - task: validate
       - task: apply-auto
-      - task: eks-credentials
+      - task: credentials
 
-  eks-credentials:
+  credentials:
     desc: fetch eks credentials and update kubeconfig
     cmds:
-      - aws eks update-kubeconfig --name $(terraform output -raw eks_cluster_name) --region $(terraform output -raw region)
+      - gcloud container clusters get-credentials $(terraform output -raw gke_cluster_name) --region $(terraform output -raw region)
+      - kubectl cluster-info

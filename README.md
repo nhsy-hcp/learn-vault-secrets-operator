@@ -4,7 +4,7 @@ This repository demonstrates HashiCorp Vault Secrets Operator (VSO) integration 
 
 ## Overview
 
-The Vault Secrets Operator enables Kubernetes applications to consume secrets from HashiCorp Vault through native Kubernetes resources. This project includes complete automation for deploying and managing Vault with VSO on both Minikube and Amazon EKS.
+The Vault Secrets Operator enables Kubernetes applications to consume secrets from HashiCorp Vault through native Kubernetes resources. This project includes complete automation for deploying and managing Vault with VSO on Minikube, Amazon EKS, and Google GKE.
 
 ## Features
 
@@ -24,7 +24,7 @@ This enables vault namespace and vault secrets operator csi features.
 
 ```bash
 vault-ent/
-└── vault-license.lic  # Required: Your Vault Enterprise license file
+└── vault-license.lic  # Required: Vault Enterprise license file
 ```
 
 The license file is automatically loaded during Vault configuration via the `task config:vault` command.
@@ -39,7 +39,8 @@ Install the following tools:
 - jq
 - task (taskfile.dev)
 - AWS CLI (for EKS deployments)
-- Terraform (for EKS infrastructure)
+- Google Cloud CLI (for GKE deployments)
+- Terraform CLI
 
 ## Quick Start
 
@@ -63,6 +64,16 @@ task secrets
 task verify
 ```
 
+### Google GKE Deployment
+
+```bash
+# Deploy complete GKE infrastructure and install Vault/VSO
+task gke:all
+task install
+task secrets
+task verify
+```
+
 ## Project Structure
 
 ```
@@ -72,7 +83,8 @@ task verify
 │   ├── static-secrets/            # Static secret manifests
 │   ├── dynamic-secrets/           # Dynamic secret manifests
 │   └── csi/                       # CSI driver configurations
-└── eks/                           # EKS infrastructure (Terraform)
+├── eks/                           # EKS infrastructure (Terraform)
+└── gke/                           # GKE infrastructure (Terraform)
 ```
 
 ## Architecture
@@ -80,15 +92,15 @@ task verify
 ### Architecture Diagram #TODO
 ![architecture diagram](diagram.png)
 
-
 ### Authentication Model
 
 The project uses a centralized JWT token reviewer service account with dedicated Vault roles per application type:
 
-- Service Account: `vault-token-reviewer` in `vault` namespace
+- Service Account: `vault` in `vault` namespace
 - ClusterRoleBinding: `vault-reviewer-binding` with `system:auth-delegator` role
-- Token Secret: `vault-jwt-secret` (long-lived service account token)
+- Token Secret: `vault-token-secret` (long-lived service account token)
 - All Kubernetes auth mounts use this token for authentication
+- Benefits: Better persistence across cluster restarts, EKS/GKE compatibility, consistent authentication
 
 #### Role Architecture
 Each application type has a dedicated Vault role with specific policies and service account bindings:
@@ -133,6 +145,26 @@ Each application type has a dedicated Vault role with specific policies and serv
 2. Uses Transit engine (`vso-transit`) to encrypt cached client data
 3. Improves performance and reduces Vault API calls
 
+### Platform-Specific Storage Classes
+
+The Vault installation automatically detects the Kubernetes platform and configures the appropriate storage class for persistent storage:
+
+**Detection Method**: The `install:vault` task analyzes the kubectl context to identify the platform:
+- **Minikube**: Context contains "minikube"
+- **EKS**: Context contains "eks" or "arn:aws"
+- **GKE**: Context contains "gke"
+
+**Storage Class Configuration**:
+- **EKS**: Uses `gp2` storage class (AWS EBS General Purpose SSD)
+  - Explicitly set via `--set server.dataStorage.storageClass=gp2`
+  - Compatible with AWS EBS CSI driver
+- **GKE**: Uses cluster default storage class (typically `standard-rwo`)
+  - No explicit storageClass override
+  - Relies on GKE's default persistent disk provisioning
+- **Minikube**: Uses `standard` storage class (minikube-hostpath provisioner)
+  - No explicit storageClass override
+  - Automatically provided by minikube
+
 ### Namespaces
 
 - `vault` - Vault and CSI provider pods
@@ -145,7 +177,7 @@ Each application type has a dedicated Vault role with specific policies and serv
 
 **Namespaces:**
 - `vso` - VSO configuration and transit encryption
-- `tn001` - Application secrets (static, dynamic, CSI)
+- `tn001` - Tenant namespace for application secrets (static, dynamic, CSI)
 
 **Static Secrets:**
 - Namespace: `tn001`
@@ -260,8 +292,10 @@ task clean
 
 # Destroy EKS cluster (automated)
 task eks:destroy:auto
-```
 
+# Destroy GKE cluster (automated)
+task gke:destroy:auto
+```
 
 ## Verification Commands
 
@@ -384,15 +418,13 @@ The project uses a `.env` file for sensitive configuration:
 VAULT_TOKEN=<root-token>
 ```
 
-This file is automatically created and populated by `task init:vault` and is excluded from git.
+This file is automatically created and populated by `task init:vault`.
 
-## Security Notes
+## Additional Notes
 
-- All Vault initialization keys are stored in `vault-init.json` (excluded from git)
+- All Vault initialization keys are stored in `vault-init.json`
 - Root token is automatically added to `.env` file
 - JWT token reviewer uses long-lived service account token for cluster persistence
-- Never commit `.env` or `vault-init.json` files
-- Use appropriate RBAC policies in production environments
 - Rotate secrets regularly using `task rotate:static-secret`
 
 ## License

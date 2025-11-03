@@ -15,6 +15,10 @@ includes:
     dir: eks
     taskfile: eks/Taskfile.yml
 
+  gke:
+    dir: gke
+    taskfile: gke/Taskfile.yml
+
 tasks:
   # ============================================================================
   # Workflow Tasks (Composite)
@@ -80,6 +84,11 @@ tasks:
           echo "minikube could not be found"
           exit 1
         fi
+      - |
+        if [ ! -f .env ]; then
+          echo ".env file not found"
+          exit 1
+        fi
       - echo "All prerequisites found"
       - helm repo add hashicorp https://helm.releases.hashicorp.com
       - helm repo update
@@ -94,21 +103,6 @@ tasks:
           echo "minikube is already running"
         else
           minikube start
-        fi
-      - |
-        # Add a gp2 storageclass so the vault-values.yaml works for both EKS and minikube
-        if ! kubectl get storageclass gp2 &> /dev/null; then
-          kubectl apply -f - <<EOF
-        apiVersion: storage.k8s.io/v1
-        kind: StorageClass
-        metadata:
-          name: gp2
-        provisioner: k8s.io/minikube-hostpath
-        volumeBindingMode: Immediate
-        EOF
-          echo "gp2 storageclass created"
-        else
-          echo "gp2 storageclass already exists"
         fi
     silent: true
 
@@ -131,7 +125,30 @@ tasks:
       - kubectl create secret generic vault-license -n vault --from-file=license=vault-ent/vault-license.lic || true
       - helm repo add hashicorp https://helm.releases.hashicorp.com
       - helm repo update
-      - helm upgrade --install vault hashicorp/vault -n vault --values vault-ent/vault-values.yaml --set server.image.tag="{{ .vault_version_tag }}"
+      - |
+        # Detect platform and set storage class accordingly
+        CONTEXT=$(kubectl config current-context)
+        STORAGE_CLASS_FLAG=""
+
+        if echo "$CONTEXT" | grep -q "minikube"; then
+          echo "Detected minikube cluster - using default storage class (standard)"
+          STORAGE_CLASS_FLAG=""
+        elif echo "$CONTEXT" | grep -Eq "eks|arn:aws"; then
+          echo "Detected EKS cluster - using gp2 storage class"
+          STORAGE_CLASS_FLAG="--set server.dataStorage.storageClass=gp2"
+        elif echo "$CONTEXT" | grep -q "gke"; then
+          echo "Detected GKE cluster - using cluster default storage class"
+          STORAGE_CLASS_FLAG=""
+        else
+          echo "Unknown cluster type - using cluster default storage class"
+          STORAGE_CLASS_FLAG=""
+        fi
+
+        helm upgrade --install vault hashicorp/vault \
+          -n vault \
+          --values vault-ent/vault-values.yaml \
+          --set server.image.tag="{{ .vault_version_tag }}" \
+          $STORAGE_CLASS_FLAG
       - sleep 10
       - kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=vault -n vault --timeout=5m
     silent: true
@@ -140,20 +157,21 @@ tasks:
     desc: Initialize Vault and save keys to vault-init.json
     cmds:
       - |
-        if [ ! -f vault-init.json ]; then
-          kubectl exec vault-0 -n vault -- vault operator init -format=json > vault-init.json
-          echo "Vault initialized. Keys saved to vault-init.json"
-          VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
-          if [ -f .env ]; then
-             sed -i.bak "s/export VAULT_TOKEN=.*/export VAULT_TOKEN=$VAULT_TOKEN/" .env
-          else
-            echo "export VAULT_TOKEN=$VAULT_TOKEN" >> .env
-          fi
-          echo "VAULT_TOKEN added to .env file"
-          sleep 10
-        else
-          echo "vault-init.json already exists, skipping vault initialization."
+        if [ -f "vault-init.json" ]; then
+            echo "vault-init.json already exists. This means Vault has already been initialized."
+            read -p "Do you want to continue and reinitialize Vault? This will overwrite existing keys (y/N): " -r REPLY
+            echo
+            if ! echo "$REPLY" | grep -qi "^y$"; then
+                echo "Initialization cancelled."
+                exit 1
+            fi
         fi
+        kubectl exec vault-0 -n vault -- vault operator init -format=json > vault-init.json
+        echo "Vault initialized. Keys saved to vault-init.json"
+        VAULT_TOKEN=$(cat vault-init.json | jq -r '.root_token')
+        sed -i.bak "s/export VAULT_TOKEN=.*/export VAULT_TOKEN=$VAULT_TOKEN/" .env
+        echo "VAULT_TOKEN added to .env file"
+        sleep 10
     silent: true
 
   unseal:vault:
@@ -314,7 +332,6 @@ tasks:
         helm upgrade --install vault-secrets-operator hashicorp/vault-secrets-operator \
           -n vault-secrets-operator \
           --create-namespace \
-          --set "csi.enabled=true" \
           --values vault-ent/vault-operator-values.yaml
       - kubectl wait --for=condition=ready pod --all -n vault-secrets-operator --timeout=5m
     silent: true
@@ -349,7 +366,27 @@ tasks:
   deploy:dynamic-secret:
     desc: Deploy dynamic secret resources with PKI certificates
     cmds:
-      - kubectl apply -f vault-ent/dynamic-secrets/postgres-deployment.yaml
+      - |
+        # Detect platform and set storage class for PostgreSQL PVC
+        CONTEXT=$(kubectl config current-context)
+        STORAGE_CLASS=""
+
+        if echo "$CONTEXT" | grep -q "minikube"; then
+          echo "Detected minikube cluster - using standard storage class for PostgreSQL"
+          STORAGE_CLASS="standard"
+        elif echo "$CONTEXT" | grep -Eq "eks|arn:aws"; then
+          echo "Detected EKS cluster - using gp2 storage class for PostgreSQL"
+          STORAGE_CLASS="gp2"
+        elif echo "$CONTEXT" | grep -q "gke"; then
+          echo "Detected GKE cluster - using standard-rwo storage class for PostgreSQL"
+          STORAGE_CLASS="standard-rwo"
+        else
+          echo "Unknown cluster type - using standard storage class for PostgreSQL"
+          STORAGE_CLASS="standard"
+        fi
+
+        # Apply postgres deployment with templated storage class
+        sed "s/\${STORAGE_CLASS}/${STORAGE_CLASS}/g" vault-ent/dynamic-secrets/postgres-deployment.yaml.tpl | kubectl apply -f -
       - sleep 3
       - kubectl wait --for=condition=ready pod --all -n dynamic-app --timeout=5m
       - |
@@ -640,7 +677,6 @@ tasks:
     cmds:
       - kubectl delete deployment --all -n csi-app --ignore-not-found
       - kubectl delete deployment --all -n dynamic-app --ignore-not-found
-      - kubectl delete -f vault-ent/dynamic-secrets/postgres-deployment.yaml --ignore-not-found
       - kubectl delete pvc --all -n dynamic-app --ignore-not-found
       - kubectl delete pods --all -n csi-app --force --ignore-not-found
       - kubectl delete pods --all -n dynamic-app --force --ignore-not-found

@@ -5,7 +5,7 @@ metadata:
   name: postgres-pvc
   namespace: dynamic-app
 spec:
-  storageClassName: gp2
+  storageClassName: ${STORAGE_CLASS}
   accessModes:
     - ReadWriteOnce
   resources:

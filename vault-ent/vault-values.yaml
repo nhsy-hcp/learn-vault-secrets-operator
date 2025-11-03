@@ -8,9 +8,10 @@ server:
   affinity: ""
   enterpriseLicense:
     secretName: vault-license
-  dataStorage:
-    enabled: true
-    storageClass: gp2
+    # storageClass is set dynamically based on platform during helm install
+    # dataStorage:
+    #  enabled: true
+    # EKS: gp2, GKE: cluster default, Minikube: standard
 
 injector:
   enabled: "false"
