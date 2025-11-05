@@ -48,6 +48,7 @@ Install the following tools:
 
 ```bash
 # Start minikube cluster
+task prerequisites
 task minikube
 task install
 task secrets
@@ -58,6 +59,7 @@ task verify
 
 ```bash
 # Deploy complete EKS infrastructure and install Vault/VSO
+task prerequisites
 task eks:all
 task install
 task secrets
@@ -68,6 +70,7 @@ task verify
 
 ```bash
 # Deploy complete GKE infrastructure and install Vault/VSO
+task prerequisites
 task gke:all
 task install
 task secrets
