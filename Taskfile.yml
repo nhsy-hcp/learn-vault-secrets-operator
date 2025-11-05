@@ -82,12 +82,6 @@ tasks:
       - |
         if ! command -v minikube &> /dev/null; then
           echo "minikube could not be found"
-          exit 1
-        fi
-      - |
-        if [ ! -f .env ]; then
-          echo ".env file not found"
-          exit 1
         fi
       - echo "All prerequisites found"
       - helm repo add hashicorp https://helm.releases.hashicorp.com
@@ -156,6 +150,16 @@ tasks:
   init:vault:
     desc: Initialize Vault and save keys to vault-init.json
     cmds:
+      - |
+        if [ ! -f ".env" ]; then
+          if [ -f ".env.example" ]; then
+            cp .env.example .env
+            echo ".env file created from .env.example"
+          else
+            echo ".env.example file not found"
+            exit 1
+          fi
+        fi
       - |
         if [ -f "vault-init.json" ]; then
             echo "vault-init.json already exists. This means Vault has already been initialized."
