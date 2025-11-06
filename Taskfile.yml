@@ -129,7 +129,7 @@ tasks:
           STORAGE_CLASS_FLAG=""
         elif echo "$CONTEXT" | grep -Eq "eks|arn:aws"; then
           echo "Detected EKS cluster - using gp2 storage class"
-          STORAGE_CLASS_FLAG="--set server.dataStorage.storageClass=gp2"
+          STORAGE_CLASS_FLAG="--set server.dataStorage.storageClass=gp2 --set server.dataStorage.enabled=true"
         elif echo "$CONTEXT" | grep -q "gke"; then
           echo "Detected GKE cluster - using cluster default storage class"
           STORAGE_CLASS_FLAG=""
