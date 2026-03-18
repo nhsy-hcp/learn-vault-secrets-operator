@@ -1,10 +1,11 @@
 version: '3'
 
 vars:
+  k8s_role_token_period: 3600
   pki_max_ttl: "4h"
   postgresql_max_ttl: "24h"
-  k8s_role_token_period: 3600
   vault_version_tag: "1.21-ent"
+  vso_version_tag: "1.3.0"
   static_app_count: 3
 
 dotenv:
@@ -336,7 +337,8 @@ tasks:
         helm upgrade --install vault-secrets-operator hashicorp/vault-secrets-operator \
           -n vault-secrets-operator \
           --create-namespace \
-          --values vault-ent/vault-operator-values.yaml
+          --values vault-ent/vault-operator-values.yaml \
+          --version {{ .vso_version_tag }}
       - kubectl wait --for=condition=ready pod --all -n vault-secrets-operator --timeout=5m
     silent: true
 
