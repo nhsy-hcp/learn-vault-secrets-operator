@@ -38,3 +38,30 @@ repos:
     hooks:
       - id: shellcheck
         args: [--severity=warning]
+
+  # Terraform checks
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.105.0
+    hooks:
+      - id: terraform_fmt
+        name: Terraform format
+        description: Rewrites Terraform configuration files to canonical format
+      - id: terraform_tflint
+        name: Terraform lint
+        description: Lints Terraform files with tflint
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
+          - --args=--minimum-failure-severity=error
+
+  # Terraform documentation
+  - repo: https://github.com/terraform-docs/terraform-docs
+    rev: v0.21.0
+    hooks:
+      - id: terraform-docs-go
+        name: Terraform docs (EKS)
+        description: Generate Terraform module documentation for EKS
+        args: ["markdown", "eks/", "--output-file", "README.md"]
+      - id: terraform-docs-go
+        name: Terraform docs (GKE)
+        description: Generate Terraform module documentation for GKE
+        args: ["markdown", "gke/", "--output-file", "README.md"]
