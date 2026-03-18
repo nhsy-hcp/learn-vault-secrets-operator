@@ -22,6 +22,8 @@ This repository demonstrates HashiCorp Vault Secrets Operator (VSO) integration 
 
 The Vault Secrets Operator enables Kubernetes applications to consume secrets from HashiCorp Vault through native Kubernetes resources. This project includes complete automation for deploying and managing Vault with VSO on Minikube, Amazon EKS, and Google GKE.
 
+![k9s](docs/images/k9s.png)
+
 ## Features
 
 - Static KV secrets synchronization with VaultStaticSecret resources
