@@ -569,6 +569,20 @@ tasks:
     cmds:
       - pre-commit run --all-files
 
+  lint:eks:
+    desc: Run tflint on EKS Terraform configuration
+    dir: eks
+    cmds:
+      - tflint --init
+      - tflint
+
+  lint:gke:
+    desc: Run tflint on GKE Terraform configuration
+    dir: gke
+    cmds:
+      - tflint --init
+      - tflint
+
   # ============================================================================
   # Debugging & Monitoring
   # ============================================================================

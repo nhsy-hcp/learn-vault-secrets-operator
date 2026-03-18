@@ -65,13 +65,6 @@ variable "gke_release_channel" {
   default     = "REGULAR"
 }
 
-variable "master_ipv4_cidr_block" {
-  type        = string
-  description = "GKE control plane CIDR block."
-  default     = "172.16.0.32/28"
-
-}
-
 variable "gke_l4_ilb_subsetting_enabled" {
   type        = bool
   description = "Boolean to enable L4 ILB subsetting on GKE cluster."

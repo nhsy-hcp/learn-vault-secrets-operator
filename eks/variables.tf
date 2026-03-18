@@ -51,12 +51,6 @@ variable "eks_managed_node_groups_ssh_key_pair" {
   default = null
 }
 
-# IAM for ebs-csi-controller
-variable "ebs_csi_controller_role_name" {
-  type    = string
-  default = "ebs-csi-controller-role"
-}
-
 variable "aws_account_id" {
   type = string
 }

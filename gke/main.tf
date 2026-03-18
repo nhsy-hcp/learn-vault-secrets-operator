@@ -9,8 +9,6 @@ data "http" "management_ip" {
   }
 }
 
-data "google_client_config" "current" {}
-
 locals {
   unique_id         = random_string.suffix.result
   gke_cluster_name  = "${var.gke_cluster_name}-${local.unique_id}"
@@ -31,10 +29,3 @@ resource "random_string" "suffix" {
   special = false
   upper   = false
 }
-
-data "google_compute_zones" "available" {
-  project = var.project
-  region  = var.region
-}
-
-data "google_project" "current" {}
