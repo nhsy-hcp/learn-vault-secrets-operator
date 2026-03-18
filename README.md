@@ -2,6 +2,22 @@
 
 This repository demonstrates HashiCorp Vault Secrets Operator (VSO) integration with Kubernetes, showcasing static secrets, dynamic secrets, and CSI driver functionality with automated workflows.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Documentation](#documentation)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
+- [Architecture](#architecture)
+- [Common Tasks](#common-tasks)
+- [Verification Commands](#verification-commands)
+- [Troubleshooting](#troubleshooting)
+- [Environment Configuration](#environment-configuration)
+- [Additional Notes](#additional-notes)
+- [Resources](#resources)
+
 ## Overview
 
 The Vault Secrets Operator enables Kubernetes applications to consume secrets from HashiCorp Vault through native Kubernetes resources. This project includes complete automation for deploying and managing Vault with VSO on Minikube, Amazon EKS, and Google GKE.
@@ -15,6 +31,23 @@ The Vault Secrets Operator enables Kubernetes applications to consume secrets fr
 - JWT authentication with Kubernetes service accounts
 - Encrypted client cache using Vault Transit engine
 - Automated deployment and teardown workflows
+
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+### Platform-Specific Guides
+- **[AWS EKS Deployment](docs/aws-eks-deployment.md)** - Complete guide for deploying on Amazon EKS with Terraform, including VPC setup, EBS CSI driver, and cost optimization
+- **[Google GKE Deployment](docs/gke-deployment.md)** - Complete guide for deploying on Google GKE with Terraform, including VPC setup, Workload Identity, and cost optimization
+- **[Minikube Local Development](docs/minikube-local-dev.md)** - Guide for local development and testing with Minikube, including setup, configuration, and debugging
+
+### Technical Documentation
+- **[Architecture](docs/architecture.md)** - Comprehensive architecture documentation covering authentication flows, secret synchronization patterns, and platform-specific configurations
+- **[Troubleshooting](docs/troubleshooting.md)** - Detailed troubleshooting procedures for common issues across all components and platforms
+- **[Testing & Validation](docs/testing-validation.md)** - Complete testing procedures, validation checklists, and integration testing scenarios
+- **[Backup & Recovery](docs/backup-recovery.md)** - Backup strategies, disaster recovery procedures, and business continuity planning
+- **[Monitoring & Observability](docs/monitoring.md)** - Monitoring setup with Prometheus, Grafana, logging with Loki, and alerting configuration
+- **[FAQ](docs/faq.md)** - Frequently asked questions covering general topics, deployment, security, and troubleshooting
 
 ## Prerequisites
 
@@ -91,9 +124,6 @@ task verify
 ```
 
 ## Architecture
-
-### Architecture Diagram #TODO
-![architecture diagram](diagram.png)
 
 ### Authentication Model
 
