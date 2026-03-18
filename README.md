@@ -47,8 +47,6 @@ Comprehensive documentation is available in the `docs/` directory:
 - **[Architecture](docs/architecture.md)** - Comprehensive architecture documentation covering authentication flows, secret synchronization patterns, and platform-specific configurations
 - **[Troubleshooting](docs/troubleshooting.md)** - Detailed troubleshooting procedures for common issues across all components and platforms
 - **[Testing & Validation](docs/testing-validation.md)** - Complete testing procedures, validation checklists, and integration testing scenarios
-- **[Backup & Recovery](docs/backup-recovery.md)** - Backup strategies, disaster recovery procedures, and business continuity planning
-- **[Monitoring & Observability](docs/monitoring.md)** - Monitoring setup with Prometheus, Grafana, logging with Loki, and alerting configuration
 - **[FAQ](docs/faq.md)** - Frequently asked questions covering general topics, deployment, security, and troubleshooting
 
 ## Prerequisites
