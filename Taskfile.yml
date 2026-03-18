@@ -669,7 +669,7 @@ tasks:
       - task: uninstall:apps
       - task: uninstall:vso
       - sleep 3
-      - task:  uninstall:vault
+      - task: uninstall:vault
       - sleep 3
       - task: clean:namespaces
     silent: true
