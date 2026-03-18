@@ -80,7 +80,10 @@ Install the following tools:
 ### Local Development with Minikube
 
 ```bash
-# Start minikube cluster
+# Complete setup (all-in-one command)
+task all
+
+# Or run step-by-step:
 task prerequisites
 task minikube
 task install
