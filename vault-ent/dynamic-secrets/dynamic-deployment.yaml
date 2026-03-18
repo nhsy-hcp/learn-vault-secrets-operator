@@ -32,43 +32,50 @@ spec:
           image: alpine:latest
           command: ["/bin/sh", "-c"]
           args:
-          - |
-            apk add --no-cache openssl postgresql-client
-            echo ""
-            while true; do
-              echo "=== Dynamic Database Credentials from ENV ==="
-              echo "Username: $DB_USERNAME"
-              echo "Password: $DB_PASSWORD"
+            - |
+              apk add --no-cache openssl postgresql-client
               echo ""
-              echo "=== Testing Database Connection ==="
-              if PGPASSWORD="$DB_PASSWORD" psql -h postgres -p 5432 -U "$DB_USERNAME" -d postgres -c "SELECT current_database(), current_user, version();" 2>&1; then
-                echo "=== Database Connection Successful ==="
-                echo "Connection info:"
-                PGPASSWORD="$DB_PASSWORD" psql -h postgres -p 5432 -U "$DB_USERNAME" -d postgres -c "SELECT inet_server_addr() as server_ip, inet_server_port() as server_port, current_database() as database;"
-              else
-                echo "Database connection failed"
-              fi
-              echo ""
-              echo "=== PKI Certificate from file ==="
-              if [ -f /secrets/dynamic/tls/tls.crt ]; then
-                openssl x509 -in /secrets/dynamic/tls/tls.crt -noout -text | grep -E "Subject:|Issuer:|Not Before:|Not After :|Serial Number:|DNS:"
+              while true; do
+                echo "=== Dynamic Database Credentials from ENV ==="
+                echo "Username: $DB_USERNAME"
+                echo "Password: $DB_PASSWORD"
                 echo ""
-                echo "=== Certificate Verification ==="
-                openssl x509 -in /secrets/dynamic/tls/tls.crt -noout -subject -issuer
-              else
-                echo "PKI certificate not yet available, waiting..."
-              fi
-              echo ""
-              echo "=== All mounted database secrets in /secrets/dynamic/db ==="
-              ls -la /secrets/dynamic/db/
-              echo ""
-              echo "=== All mounted PKI certs in /secrets/dynamic/tls ==="
-              ls -la /secrets/dynamic/tls/
-              echo ""
-              echo "Waiting 10 minutes before next check... ($(date))"
-              echo ""
-              sleep 600
-            done
+                echo "=== Testing Database Connection ==="
+                if PGPASSWORD="$DB_PASSWORD" psql -h postgres -p 5432 \
+                  -U "$DB_USERNAME" -d postgres \
+                  -c "SELECT current_database(), current_user, version();" 2>&1; then
+                  echo "=== Database Connection Successful ==="
+                  echo "Connection info:"
+                  PGPASSWORD="$DB_PASSWORD" psql -h postgres -p 5432 \
+                    -U "$DB_USERNAME" -d postgres \
+                    -c "SELECT inet_server_addr() as server_ip, \
+                        inet_server_port() as server_port, \
+                        current_database() as database;"
+                else
+                  echo "Database connection failed"
+                fi
+                echo ""
+                echo "=== PKI Certificate from file ==="
+                if [ -f /secrets/dynamic/tls/tls.crt ]; then
+                  openssl x509 -in /secrets/dynamic/tls/tls.crt -noout -text | \
+                    grep -E "Subject:|Issuer:|Not Before:|Not After :|Serial Number:|DNS:"
+                  echo ""
+                  echo "=== Certificate Verification ==="
+                  openssl x509 -in /secrets/dynamic/tls/tls.crt -noout -subject -issuer
+                else
+                  echo "PKI certificate not yet available, waiting..."
+                fi
+                echo ""
+                echo "=== All mounted database secrets in /secrets/dynamic/db ==="
+                ls -la /secrets/dynamic/db/
+                echo ""
+                echo "=== All mounted PKI certs in /secrets/dynamic/tls ==="
+                ls -la /secrets/dynamic/tls/
+                echo ""
+                echo "Waiting 10 minutes before next check... ($(date))"
+                echo ""
+                sleep 600
+              done
           env:
             - name: DB_PASSWORD
               valueFrom:
