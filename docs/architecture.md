@@ -138,37 +138,37 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 ┌─────────────────────────────────────────────────────────────┐
 │                    Kubernetes Cluster                       │
 │                                                             │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  vault namespace                                    │   │
-│  │  ┌──────────────────────────────────────────────┐  │   │
-│  │  │  Service Account: vault                      │  │   │
-│  │  │  ClusterRole: system:auth-delegator          │  │   │
-│  │  │  Token Secret: vault-token-secret (long-lived)│ │   │
-│  │  └──────────────────────────────────────────────┘  │   │
-│  └────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  vault namespace                                     │   │
+│  │  ┌────────────────────────────────────────────────┐  │   │
+│  │  │  Service Account: vault                        │  │   │
+│  │  │  ClusterRole: system:auth-delegator            │  │   │
+│  │  │  Token Secret: vault-token-secret (long-lived) │  │   │
+│  │  └────────────────────────────────────────────────┘  │   │
+│  └──────────────────────────────────────────────────────┘   │
 │                          │                                  │
-│                          │ JWT Token for Review            │
+│                          │ JWT Token for Review             │
 │                          ▼                                  │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │              Vault (tn001 namespace)               │   │
-│  │  ┌──────────────────────────────────────────────┐ │   │
-│  │  │  Kubernetes Auth Mount: k8s-auth-mount       │ │   │
-│  │  │  - Uses vault SA token for token review      │ │   │
-│  │  │  - Validates app SA tokens                   │ │   │
-│  │  └──────────────────────────────────────────────┘ │   │
-│  └────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              Vault (tn001 namespace)                │    │
+│  │  ┌──────────────────────────────────────────────┐   │    │
+│  │  │  Kubernetes Auth Mount: k8s-auth-mount       │   │    │
+│  │  │  - Uses vault SA token for token review      │   │    │
+│  │  │  - Validates app SA tokens                   │   │    │
+│  │  └──────────────────────────────────────────────┘   │    │
+│  └─────────────────────────────────────────────────────┘    │
 │                          ▲                                  │
-│                          │ App SA Token                    │
+│                          │ App SA Token                     │
 │                          │                                  │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  Application Namespaces                            │   │
-│  │  ┌──────────────────────────────────────────────┐ │   │
-│  │  │  Service Accounts:                           │ │   │
-│  │  │  - static-app-sa (static-app-*)              │ │   │
-│  │  │  - dynamic-app-sa (dynamic-app)              │ │   │
-│  │  │  - csi-app-sa (csi-app)                      │ │   │
-│  │  └──────────────────────────────────────────────┘ │   │
-│  └────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Application Namespaces                             │    │
+│  │  ┌───────────────────────────────────────────────┐  │    │
+│  │  │  Service Accounts:                            │  │    │
+│  │  │  - static-app-sa (static-app-*)               │  │    │
+│  │  │  - dynamic-app-sa (dynamic-app)               │  │    │
+│  │  │  - csi-app-sa (csi-app)                       │  │    │
+│  │  └───────────────────────────────────────────────┘  │    │
+│  └─────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -244,46 +244,46 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  1. User creates VaultStaticSecret CRD                      │
-│     - Specifies Vault path: kvv2/webapp/config             │
-│     - References VaultAuth for authentication              │
-│     - Defines destination K8s Secret name                  │
+│     - Specifies Vault path: kvv2/webapp/config              │
+│     - References VaultAuth for authentication               │
+│     - Defines destination K8s Secret name                   │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  2. VSO Controller watches VaultStaticSecret                │
-│     - Detects new/updated resource                         │
-│     - Reads VaultAuth configuration                        │
+│     - Detects new/updated resource                          │
+│     - Reads VaultAuth configuration                         │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  3. VSO authenticates to Vault                              │
-│     - Uses app service account token                       │
-│     - Authenticates via k8s-auth-mount                     │
-│     - Receives Vault token with static-secret policy       │
+│     - Uses app service account token                        │
+│     - Authenticates via k8s-auth-mount                      │
+│     - Receives Vault token with static-secret policy        │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  4. VSO reads secret from Vault                             │
-│     - Fetches kvv2/data/webapp/config                      │
-│     - Retrieves all key-value pairs                        │
+│     - Fetches kvv2/data/webapp/config                       │
+│     - Retrieves all key-value pairs                         │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  5. VSO creates/updates Kubernetes Secret                   │
-│     - Creates Secret in application namespace              │
-│     - Populates with Vault secret data                     │
-│     - Sets owner reference for lifecycle management        │
+│     - Creates Secret in application namespace               │
+│     - Populates with Vault secret data                      │
+│     - Sets owner reference for lifecycle management         │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  6. Application pod consumes secret                         │
-│     - Mounts as environment variables                      │
-│     - Mounts as volume at /secrets/static                  │
+│     - Mounts as environment variables                       │
+│     - Mounts as volume at /secrets/static                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -292,52 +292,52 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  1. User creates VaultDynamicSecret CRD                     │
-│     - Specifies Vault path: db/creds/dev-postgres          │
-│     - Defines renewal and rotation settings                │
+│     - Specifies Vault path: db/creds/dev-postgres           │
+│     - Defines renewal and rotation settings                 │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  2. VSO Controller watches VaultDynamicSecret               │
-│     - Detects new/updated resource                         │
-│     - Reads VaultAuth configuration                        │
+│     - Detects new/updated resource                          │
+│     - Reads VaultAuth configuration                         │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  3. VSO authenticates to Vault                              │
-│     - Uses app service account token                       │
-│     - Receives Vault token with dynamic-secret policy      │
+│     - Uses app service account token                        │
+│     - Receives Vault token with dynamic-secret policy       │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  4. VSO requests dynamic credentials                        │
-│     - Calls db/creds/dev-postgres                          │
-│     - Vault generates new DB credentials                   │
-│     - Credentials have TTL (default: 1 hour)               │
+│     - Calls db/creds/dev-postgres                           │
+│     - Vault generates new DB credentials                    │
+│     - Credentials have TTL (default: 1 hour)                │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  5. VSO creates Kubernetes Secret                           │
-│     - Stores username and password                         │
-│     - Includes lease information                           │
+│     - Stores username and password                          │
+│     - Includes lease information                            │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  6. VSO manages credential lifecycle                        │
-│     - Renews lease before expiration                       │
-│     - Rotates credentials based on policy                  │
-│     - Updates K8s Secret with new credentials              │
+│     - Renews lease before expiration                        │
+│     - Rotates credentials based on policy                   │
+│     - Updates K8s Secret with new credentials               │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  7. Application pod consumes credentials                    │
-│     - Mounts as volume at /secrets/dynamic/db              │
-│     - Automatically gets updated credentials               │
+│     - Mounts as volume at /secrets/dynamic/db               │
+│     - Automatically gets updated credentials                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -346,58 +346,58 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  1. User creates SecretProviderClass                        │
-│     - Defines Vault path and parameters                    │
-│     - Specifies authentication details                     │
+│     - Defines Vault path and parameters                     │
+│     - Specifies authentication details                      │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  2. User creates Pod with CSI volume                        │
-│     - References SecretProviderClass                       │
-│     - Defines mount path                                   │
+│     - References SecretProviderClass                        │
+│     - Defines mount path                                    │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  3. Kubelet schedules pod                                   │
-│     - Detects CSI volume requirement                       │
-│     - Calls CSI node driver                                │
+│     - Detects CSI volume requirement                        │
+│     - Calls CSI node driver                                 │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  4. CSI node driver intercepts mount                        │
-│     - Reads SecretProviderClass                            │
-│     - Initiates Vault authentication                       │
+│     - Reads SecretProviderClass                             │
+│     - Initiates Vault authentication                        │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  5. Vault CSI Provider authenticates                        │
-│     - Uses pod's service account token                     │
-│     - Authenticates via k8s-auth-mount                     │
+│     - Uses pod's service account token                      │
+│     - Authenticates via k8s-auth-mount                      │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  6. Vault CSI Provider fetches secrets                      │
-│     - Reads from kvv2/data/db-creds                        │
-│     - Formats secrets per SecretProviderClass              │
+│     - Reads from kvv2/data/db-creds                         │
+│     - Formats secrets per SecretProviderClass               │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  7. CSI driver mounts secrets to pod                        │
-│     - Writes secrets to tmpfs volume                       │
-│     - Mounts at specified path (/secrets/static)           │
-│     - No Kubernetes Secret resource created                │
+│     - Writes secrets to tmpfs volume                        │
+│     - Mounts at specified path (/secrets/static)            │
+│     - No Kubernetes Secret resource created                 │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  8. Application reads secrets from filesystem               │
-│     - Secrets available at mount path                      │
-│     - Secrets exist only in pod memory                     │
+│     - Secrets available at mount path                       │
+│     - Secrets exist only in pod memory                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
