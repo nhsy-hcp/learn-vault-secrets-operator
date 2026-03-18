@@ -47,7 +47,7 @@ This document provides a comprehensive architectural overview of the Vault Secre
   - Transit engine: `vso-transit`
   - Encryption key: `vso-client-cache`
   - Auth role: `auth-role-operator`
-  
+
 - **tn001**: Tenant namespace for application secrets
   - KV v2 mount: `kvv2`
   - Database mount: `db`
@@ -102,7 +102,7 @@ This document provides a comprehensive architectural overview of the Vault Secre
 
 #### Reconciliation Loop
 ```
-Watch CRDs → Authenticate to Vault → Fetch/Generate Secrets → 
+Watch CRDs → Authenticate to Vault → Fetch/Generate Secrets →
 Sync to K8s Secrets → Update Status → Cache Results → Repeat
 ```
 

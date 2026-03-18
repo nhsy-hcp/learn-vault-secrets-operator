@@ -41,3 +41,6 @@ Thumbs.db
 
 .env
 *.lic
+AGENTS.md
+notes.txt
+.bob/
