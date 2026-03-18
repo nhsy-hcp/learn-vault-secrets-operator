@@ -38,7 +38,7 @@ variable "eks_node_workers" {
 
 variable "eks_node_instance_types" {
   type    = list(string)
-  default = ["m5.large", "m4.large"]
+  default = ["t3.medium"]
 }
 
 variable "eks_node_capacity_type" {
