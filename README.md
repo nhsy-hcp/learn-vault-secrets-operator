@@ -304,7 +304,7 @@ task logs:vso
 # Port forward Vault UI
 task port-forward
 
-# Open Vault UI with root token
+# Open Vault UI with root token (requires port-forward in separate terminal)
 task ui
 
 # Check Kubernetes auth configuration

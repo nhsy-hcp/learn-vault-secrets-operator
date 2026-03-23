@@ -238,7 +238,10 @@ k9s
 ### Accessing Vault UI
 
 ```bash
-# Get root token and open UI
+# In a separate terminal window, start port forwarding
+task port-forward
+
+# In your main terminal, get root token and open UI
 task ui
 ```
 
@@ -279,164 +282,15 @@ task list:identity-entities
 
 ## Troubleshooting
 
-### Common Issues
+For detailed troubleshooting procedures, common issues, and platform-specific solutions, refer to the [Troubleshooting Guide](troubleshooting.md).
 
-#### 0. kubectl Access Issues
-
-**Symptom:** kubectl commands fail with connection errors or "Unable to connect to the server"
-
-**Solution:**
+**Quick kubectl Access Fix:**
 ```bash
 # Refresh kubectl credentials
 task gke:credentials
 
 # Verify cluster access
 kubectl cluster-info
-
-# Check current context
-kubectl config current-context
-
-# Manually update kubeconfig if needed
-gcloud container clusters get-credentials gke-hcp --region europe-west1
-```
-
-#### 1. Cluster Creation Fails
-
-**Symptom:** Terraform apply fails during GKE cluster creation
-
-**Solution:**
-```bash
-# Check IAM permissions
-gcloud projects get-iam-policy YOUR_PROJECT_ID
-
-# Enable required APIs
-gcloud services enable container.googleapis.com compute.googleapis.com
-
-# Check quotas
-gcloud compute project-info describe --project=YOUR_PROJECT_ID
-
-# Clean up and retry
-cd gke/
-terraform destroy
-terraform apply
-```
-
-#### 2. Nodes Not Ready
-
-**Symptom:** Nodes show as NotReady or don't appear
-
-**Solution:**
-```bash
-# Check node status
-kubectl get nodes
-
-# Check node pool status
-gcloud container node-pools describe default-pool \
-  --cluster=gke-hcp \
-  --region=europe-west1
-```
-
-#### 3. PVC Stuck in Pending
-
-**Symptom:** PVCs stuck in Pending state
-
-**Solution:**
-```bash
-# Check PVC status
-kubectl get pvc -A
-
-# Describe PVC for events
-kubectl describe pvc <pvc-name> -n <namespace>
-
-# Check storage classes
-kubectl get storageclass
-
-# Verify disk quota
-gcloud compute project-info describe --project=YOUR_PROJECT_ID | grep -A 5 "DISKS_TOTAL_GB"
-```
-
-#### 4. Load Balancer Not Provisioning
-
-**Symptom:** Vault service stuck in Pending, no EXTERNAL-IP
-
-**Solution:**
-```bash
-# Check service status
-kubectl get svc -n vault vault
-
-# Describe service for events
-kubectl describe svc vault -n vault
-
-# Check IP address quota
-gcloud compute project-info describe --project=YOUR_PROJECT_ID | grep -A 5 "IN_USE_ADDRESSES"
-
-# Check firewall rules
-gcloud compute firewall-rules list
-```
-
-#### 5. Vault Pods Not Starting
-
-**Symptom:** Vault pods in CrashLoopBackOff or Pending
-
-**Solution:**
-```bash
-# Check pod status
-kubectl get pods -n vault
-
-# Describe pod for events
-kubectl describe pod vault-0 -n vault
-
-# Check PVC status
-kubectl get pvc -n vault
-
-# Verify license file
-ls -la vault-ent/vault-license.lic
-
-# Check Vault logs
-kubectl logs vault-0 -n vault
-```
-
-#### 6. Secret Synchronization Issues
-
-**Symptom:** VaultStaticSecret or VaultDynamicSecret not syncing
-
-**Solution:**
-```bash
-# Check VSO logs
-task logs:vso
-
-# Verify VaultConnection
-kubectl get vaultconnection -A
-
-# Verify VaultAuth
-kubectl get vaultauth -A
-
-# Describe VaultStaticSecret
-kubectl describe vaultstaticsecret -n static-app-1
-
-# Check Vault auth configuration
-task list:k8s-auth
-```
-
-### Debugging Commands
-
-```bash
-# Cluster information
-kubectl cluster-info
-kubectl get nodes -o wide
-
-# GKE cluster details
-gcloud container clusters describe gke-hcp --region europe-west1
-
-# Node pool details
-gcloud container node-pools list --cluster=gke-hcp --region europe-west1
-gcloud container node-pools describe default-pool --cluster=gke-hcp --region europe-west1
-
-# Check all events
-kubectl get events -A --sort-by='.lastTimestamp'
-
-# Or use k9s for interactive exploration
-k9s
 ```
 
 ## Cleanup

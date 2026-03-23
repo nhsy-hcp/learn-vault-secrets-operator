@@ -216,7 +216,10 @@ k9s
 ### Accessing Vault UI
 
 ```bash
-# Get root token and open UI
+# In a separate terminal window, start port forwarding
+task port-forward
+
+# In your main terminal, get root token and open UI
 task ui
 ```
 
@@ -257,153 +260,15 @@ task list:identity-entities
 
 ## Troubleshooting
 
-### Common Issues
+For detailed troubleshooting procedures, common issues, and platform-specific solutions, refer to the [Troubleshooting Guide](troubleshooting.md).
 
-#### 0. kubectl Access Issues
-
-**Symptom:** kubectl commands fail with connection errors or "Unable to connect to the server"
-
-**Solution:**
+**Quick kubectl Access Fix:**
 ```bash
 # Refresh kubectl credentials
 task eks:eks-credentials
 
 # Verify cluster access
 kubectl cluster-info
-
-# Check current context
-kubectl config current-context
-
-# Manually update kubeconfig if needed
-aws eks update-kubeconfig --name eks-hcp --region eu-west-1
-```
-
-#### 1. Cluster Creation Fails
-
-**Symptom:** Terraform apply fails during EKS cluster creation
-
-**Solution:**
-```bash
-# Check IAM permissions
-aws iam get-user
-
-# Check service quotas
-aws service-quotas list-service-quotas --service-code eks
-
-# Clean up and retry
-cd eks/
-terraform destroy
-terraform apply
-```
-
-#### 2. Nodes Not Joining Cluster
-
-**Symptom:** Nodes show as NotReady or don't appear
-
-**Solution:**
-```bash
-# Check node status
-kubectl get nodes
-
-# Check node group status
-aws eks describe-nodegroup --cluster-name eks-hcp --nodegroup-name system-nodes
-```
-
-#### 3. EBS CSI Driver Issues
-
-**Symptom:** PVCs stuck in Pending state
-
-**Solution:**
-```bash
-# Check EBS CSI driver pods
-kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
-
-# Check CSI driver logs
-kubectl logs -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
-
-# Check PVC events
-kubectl describe pvc <pvc-name> -n <namespace>
-```
-
-#### 4. Load Balancer Not Provisioning
-
-**Symptom:** Vault service stuck in Pending, no EXTERNAL-IP
-
-**Solution:**
-```bash
-# Check ALB controller
-kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
-
-# Check controller logs
-kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
-
-# Check service events
-kubectl describe svc vault -n vault
-```
-
-#### 5. Vault Pods Not Starting
-
-**Symptom:** Vault pods in CrashLoopBackOff or Pending
-
-**Solution:**
-```bash
-# Check pod status
-kubectl get pods -n vault
-
-# Describe pod for events
-kubectl describe pod vault-0 -n vault
-
-# Check PVC status
-kubectl get pvc -n vault
-
-# Verify license file
-ls -la vault-ent/vault-license.lic
-
-# Check Vault logs
-kubectl logs vault-0 -n vault
-```
-
-#### 6. Secret Synchronization Issues
-
-**Symptom:** VaultStaticSecret or VaultDynamicSecret not syncing
-
-**Solution:**
-```bash
-# Check VSO logs
-task logs:vso
-
-# Verify VaultConnection
-kubectl get vaultconnection -A
-
-# Verify VaultAuth
-kubectl get vaultauth -A
-
-# Describe VaultStaticSecret
-kubectl describe vaultstaticsecret -n static-app-1
-
-# Check Vault auth configuration
-task list:k8s-auth
-```
-
-### Debugging Commands
-
-```bash
-# Cluster information
-kubectl cluster-info
-kubectl get nodes -o wide
-
-# EKS cluster details
-aws eks describe-cluster --name eks-hcp
-
-# Node group details
-aws eks list-nodegroups --cluster-name eks-hcp
-aws eks describe-nodegroup --cluster-name eks-hcp --nodegroup-name system-nodes
-
-# Check all events
-kubectl get events -A --sort-by='.lastTimestamp'
-
-# Or use k9s for interactive exploration
-k9s
 ```
 
 ## Cleanup
