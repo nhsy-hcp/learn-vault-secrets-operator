@@ -16,6 +16,7 @@ This guide provides detailed instructions for deploying HashiCorp Vault and Vaul
 | terraform | 1.6+ | [Install Guide](https://developer.hashicorp.com/terraform/install) |
 | task | 3.30+ | [Install Guide](https://taskfile.dev/installation/) |
 | jq | 1.6+ | [Install Guide](https://jqlang.github.io/jq/download/) |
+| k9s | 0.27+ (optional) | [Install Guide](https://k9scli.io/topics/install/) |
 
 ### GCP Project Requirements
 
@@ -46,8 +47,8 @@ gcloud init
 
 # Or configure manually
 gcloud config set project YOUR_PROJECT_ID
-gcloud config set compute/region us-central1
-gcloud config set compute/zone us-central1-a
+gcloud config set compute/region europe-west1
+gcloud config set compute/zone europe-west1-b
 
 # Authenticate
 gcloud auth login
@@ -80,7 +81,7 @@ vault-ent/
 
 **VPC Configuration:**
 - Network: Custom VPC (auto-mode disabled)
-- Subnet: us-central1 (10.0.0.0/24)
+- Subnet: europe-west1 (10.0.0.0/24)
 - Secondary Ranges:
   - Pods: 10.1.0.0/16
   - Services: 10.2.0.0/16
@@ -96,8 +97,8 @@ vault-ent/
 ### GKE Cluster Configuration
 
 **Cluster Type:** Regional (High Availability)
-- Region: us-central1
-- Zones: us-central1-a, us-central1-b, us-central1-c
+- Region: europe-west1
+- Zones: europe-west1-b, europe-west1-c, europe-west1-d
 - Control Plane: Multi-zonal (GCP managed)
 
 **Cluster Features:**
@@ -165,171 +166,143 @@ vault-ent/
 ### Step 1: Verify Prerequisites
 
 ```bash
-# Check tool versions
+# Check tool versions and GCP configuration
 task prerequisites
-
-# Expected output:
-# ✓ gcloud CLI version 4xx.x.x
-# ✓ kubectl version 1.x.x
-# ✓ helm version 3.x.x
-# ✓ terraform version 1.x.x
-# ✓ task version 3.x.x
-# ✓ jq version 1.x.x
-
-# Verify GCP authentication
-gcloud auth list
-gcloud config get-value project
 ```
 
 ### Step 2: Deploy GKE Infrastructure
 
 ```bash
-# Navigate to GKE directory
-cd gke/
-
-# Initialize Terraform
-terraform init
-
-# Review planned changes
-terraform plan
-
-# Deploy infrastructure (10-15 minutes)
-terraform apply
-
-# Or use the automated task
-cd ..
+# Deploy complete GKE infrastructure (20+ minutes)
 task gke:all
-```
 
-**What Gets Created:**
-- Custom VPC network with subnet
-- Cloud NAT for private node internet access
-- GKE regional cluster with control plane
-- Default node pool with 3 nodes
-- Firewall rules
-- Service accounts
-- IAM bindings
-- Cloud Logging and Monitoring configuration
+# Wait 3 minutes for stabilization
+sleep 180
 
-### Step 3: Configure kubectl
-
-```bash
-# Get cluster credentials
-gcloud container clusters get-credentials vault-gke-cluster --region us-central1
-
-# Verify cluster access
-kubectl get nodes
-
-# Expected output:
-# NAME                                                  STATUS   ROLES    AGE   VERSION
-# gke-vault-gke-cluster-default-pool-xxxxxxxx-xxxx     Ready    <none>   5m    v1.28.x
-# gke-vault-gke-cluster-default-pool-xxxxxxxx-xxxx     Ready    <none>   5m    v1.28.x
-# gke-vault-gke-cluster-default-pool-xxxxxxxx-xxxx     Ready    <none>   5m    v1.28.x
-
-# Verify cluster info
+# Verify cluster connectivity
 kubectl cluster-info
 
-# Check storage classes
-kubectl get storageclass
-
-# Expected output:
-# NAME                     PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
-# premium-rwo              pd.csi.storage.gke.io   Delete          WaitForFirstConsumer   true                   5m
-# standard (default)       kubernetes.io/gce-pd    Delete          Immediate              true                   5m
-# standard-rwo (default)   pd.csi.storage.gke.io   Delete          WaitForFirstConsumer   true                   5m
+# Open k9s for interactive cluster exploration
+k9s
 ```
 
-### Step 4: Install Vault and VSO
+### Step 3: Install Vault and VSO
 
 ```bash
-# Install Vault (uses cluster default storage class)
-task install:vault
+# Install and configure Vault and VSO
+task install
 
-# Verify Vault installation
+# Wait for pods to stabilize
 kubectl get pods -n vault
-
-# Expected output:
-# NAME                                    READY   STATUS    RESTARTS   AGE
-# vault-0                                 1/1     Running   0          2m
-# vault-agent-injector-xxxxxxxxxx-xxxxx   1/1     Running   0          2m
-
-# Check Vault PVC
-kubectl get pvc -n vault
-
-# Expected output:
-# NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-# data-vault-0   Bound    pvc-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx   10Gi       RWO            standard-rwo   2m
-
-# Install VSO
-task install:vso
-
-# Verify VSO installation
 kubectl get pods -n vault-secrets-operator
 ```
 
-### Step 5: Configure Vault
+### Step 4: Deploy Secret Applications
 
 ```bash
-# Initialize and configure Vault
-task config:vault
-
-# This performs:
-# - Vault initialization
-# - Unsealing
-# - Root token configuration
-# - Namespace creation (vso, tn001)
-# - Secret engine setup (KV, Database, PKI, Transit)
-# - Kubernetes auth configuration
-# - Policy creation
-# - Role configuration
-```
-
-### Step 6: Deploy Secrets
-
-```bash
-# Deploy all secret types
+# Deploy all secret types and applications
 task secrets
-
-# This creates:
-# - Static secret applications (static-app-1, static-app-2, static-app-3)
-# - Dynamic secret application (dynamic-app)
-# - CSI secret application (csi-app)
-# - PostgreSQL database for dynamic secrets
 ```
 
-### Step 7: Verify Deployment
+### Step 5: Verify Complete Deployment
 
 ```bash
-# Run complete verification
+# Run comprehensive verification
 task verify
+```
 
-# Individual verifications
-task verify:pods          # Check all pod status
-task verify:static-secret # Verify static secret sync
-task verify:dynamic-secret # Verify dynamic secret generation
-task verify:csi-secret    # Verify CSI volume mounts
+## Monitoring with k9s
 
-# Check Vault service external IP
-kubectl get svc -n vault vault
+k9s provides a terminal-based UI for managing Kubernetes clusters:
 
-# Expected output:
-# NAME    TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)
-# vault   LoadBalancer   10.x.x.x        xx.xx.xx.xx      8200:xxxxx/TCP,8201:xxxxx/TCP
+```bash
+# Launch k9s
+k9s
+
+# Useful k9s commands:
+# :pods          - View all pods
+# :ns            - Switch namespace
+# :vault         - Jump to vault namespace
+# :events        - View cluster events
+# :pvc           - View persistent volume claims
+# :svc           - View services
+# /              - Filter resources
+# l              - View logs
+# d              - Describe resource
+# Ctrl+d         - Delete resource
+# ?              - Help
+```
+
+## Post-Deployment Operations
+
+### Accessing Vault UI
+
+```bash
+# Get root token and open UI
+task ui
+```
+
+### Secret Rotation
+
+```bash
+# Rotate static secrets
+task rotate:static-secret
+
+# Rotate dynamic database secrets
+task rotate:dynamic-secret
+
+# Rotate CSI secrets
+task rotate:csi:secret
+```
+
+### Monitoring and Debugging
+
+```bash
+# View Vault logs
+task logs
+
+# View VSO logs
+task logs:vso
+
+# Check Kubernetes events
+task events
+
+# Port forward Vault for local access
+task port-forward
+
+# List Kubernetes auth configuration
+task list:k8s-auth
+
+# List identity entities
+task list:identity-entities
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
+#### 0. kubectl Access Issues
+
+**Symptom:** kubectl commands fail with connection errors or "Unable to connect to the server"
+
+**Solution:**
+```bash
+# Refresh kubectl credentials
+task gke:credentials
+
+# Verify cluster access
+kubectl cluster-info
+
+# Check current context
+kubectl config current-context
+
+# Manually update kubeconfig if needed
+gcloud container clusters get-credentials gke-hcp --region europe-west1
+```
+
 #### 1. Cluster Creation Fails
 
 **Symptom:** Terraform apply fails during GKE cluster creation
-
-**Possible Causes:**
-- Insufficient IAM permissions
-- API not enabled
-- Resource quota exceeded
-- Invalid network configuration
 
 **Solution:**
 ```bash
@@ -342,10 +315,8 @@ gcloud services enable container.googleapis.com compute.googleapis.com
 # Check quotas
 gcloud compute project-info describe --project=YOUR_PROJECT_ID
 
-# Review Terraform logs
-terraform apply -debug
-
 # Clean up and retry
+cd gke/
 terraform destroy
 terraform apply
 ```
@@ -354,38 +325,20 @@ terraform apply
 
 **Symptom:** Nodes show as NotReady or don't appear
 
-**Possible Causes:**
-- Network connectivity issues
-- Insufficient resources
-- Node pool configuration errors
-
 **Solution:**
 ```bash
 # Check node status
 kubectl get nodes
 
-# Describe node for events
-kubectl describe node <node-name>
-
 # Check node pool status
 gcloud container node-pools describe default-pool \
-  --cluster=vault-gke-cluster \
-  --region=us-central1
-
-# View node pool events
-gcloud logging read "resource.type=gke_nodepool AND resource.labels.cluster_name=vault-gke-cluster" \
-  --limit 50 \
-  --format json
+  --cluster=gke-hcp \
+  --region=europe-west1
 ```
 
 #### 3. PVC Stuck in Pending
 
 **Symptom:** PVCs stuck in Pending state
-
-**Possible Causes:**
-- Storage class not available
-- Insufficient disk quota
-- Zone mismatch
 
 **Solution:**
 ```bash
@@ -400,36 +353,11 @@ kubectl get storageclass
 
 # Verify disk quota
 gcloud compute project-info describe --project=YOUR_PROJECT_ID | grep -A 5 "DISKS_TOTAL_GB"
-
-# Check available zones
-gcloud compute zones list --filter="region:us-central1"
-
-# Manually create test PVC
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: test-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: standard-rwo
-  resources:
-    requests:
-      storage: 1Gi
-EOF
-
-kubectl get pvc test-pvc
 ```
 
 #### 4. Load Balancer Not Provisioning
 
 **Symptom:** Vault service stuck in Pending, no EXTERNAL-IP
-
-**Possible Causes:**
-- Insufficient IP address quota
-- Firewall rules blocking health checks
-- Service configuration errors
 
 **Solution:**
 ```bash
@@ -444,24 +372,11 @@ gcloud compute project-info describe --project=YOUR_PROJECT_ID | grep -A 5 "IN_U
 
 # Check firewall rules
 gcloud compute firewall-rules list
-
-# Verify health check firewall rule exists
-gcloud compute firewall-rules describe allow-health-checks
-
-# Check load balancer status
-gcloud compute forwarding-rules list
-gcloud compute target-pools list
 ```
 
 #### 5. Vault Pods Not Starting
 
 **Symptom:** Vault pods in CrashLoopBackOff or Pending
-
-**Possible Causes:**
-- PVC not bound
-- Insufficient node resources
-- License file missing
-- Image pull errors
 
 **Solution:**
 ```bash
@@ -474,41 +389,33 @@ kubectl describe pod vault-0 -n vault
 # Check PVC status
 kubectl get pvc -n vault
 
-# Check node resources
-kubectl top nodes
-
 # Verify license file
 ls -la vault-ent/vault-license.lic
 
 # Check Vault logs
 kubectl logs vault-0 -n vault
-
-# Check image pull status
-kubectl get events -n vault --sort-by='.lastTimestamp' | grep -i pull
 ```
 
-#### 6. Workload Identity Issues
+#### 6. Secret Synchronization Issues
 
-**Symptom:** Pods cannot access GCP services
-
-**Possible Causes:**
-- Workload Identity not properly configured
-- IAM bindings missing
-- Service account annotation missing
+**Symptom:** VaultStaticSecret or VaultDynamicSecret not syncing
 
 **Solution:**
 ```bash
-# Verify Workload Identity is enabled
-gcloud container clusters describe vault-gke-cluster --region us-central1 --format="value(workloadIdentityConfig.workloadPool)"
+# Check VSO logs
+task logs:vso
 
-# Check Kubernetes service account annotation
-kubectl get sa vault -n vault -o yaml | grep iam.gke.io/gcp-service-account
+# Verify VaultConnection
+kubectl get vaultconnection -A
 
-# Verify IAM binding
-gcloud iam service-accounts get-iam-policy vault-gke-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com
+# Verify VaultAuth
+kubectl get vaultauth -A
 
-# Test from pod
-kubectl run -it --rm test-wi --image=google/cloud-sdk:slim --serviceaccount=vault -n vault -- gcloud auth list
+# Describe VaultStaticSecret
+kubectl describe vaultstaticsecret -n static-app-1
+
+# Check Vault auth configuration
+task list:k8s-auth
 ```
 
 ### Debugging Commands
@@ -519,32 +426,17 @@ kubectl cluster-info
 kubectl get nodes -o wide
 
 # GKE cluster details
-gcloud container clusters describe vault-gke-cluster --region us-central1
+gcloud container clusters describe gke-hcp --region europe-west1
 
 # Node pool details
-gcloud container node-pools list --cluster=vault-gke-cluster --region=us-central1
-gcloud container node-pools describe default-pool --cluster=vault-gke-cluster --region=us-central1
+gcloud container node-pools list --cluster=gke-hcp --region europe-west1
+gcloud container node-pools describe default-pool --cluster=gke-hcp --region europe-west1
 
-# Network details
-gcloud compute networks describe vault-gke-network
-gcloud compute networks subnets describe vault-gke-subnet --region=us-central1
+# Check all events
+kubectl get events -A --sort-by='.lastTimestamp'
 
-# Firewall rules
-gcloud compute firewall-rules list --filter="network:vault-gke-network"
-
-# Cloud NAT
-gcloud compute routers describe vault-gke-router --region=us-central1
-gcloud compute routers nats describe vault-gke-nat --router=vault-gke-router --region=us-central1
-
-# Load balancers
-gcloud compute forwarding-rules list
-gcloud compute backend-services list
-
-# Cloud Logging
-gcloud logging read "resource.type=k8s_cluster AND resource.labels.cluster_name=vault-gke-cluster" --limit 50
-
-# Cloud Monitoring
-gcloud monitoring dashboards list
+# Or use k9s for interactive exploration
+k9s
 ```
 
 ## Cleanup
@@ -552,16 +444,15 @@ gcloud monitoring dashboards list
 ### Automated Cleanup
 
 ```bash
-# Destroy all resources (automated, no confirmation)
+# Destroy all resources (15+ minutes)
 task gke:destroy:auto
 
-# This will:
-# 1. Delete all Kubernetes resources
-# 2. Destroy GKE cluster
-# 3. Delete VPC network and subnets
-# 4. Remove Cloud NAT and router
-# 5. Delete firewall rules
-# 6. Remove service accounts and IAM bindings
+# Wait 3 minutes for asynchronous deletions
+sleep 180
+
+# Verify cluster is destroyed
+gcloud container clusters describe gke-hcp --region europe-west1
+# Expected: ERROR: (gcloud.container.clusters.describe) ResponseError: code=404
 ```
 
 ### Manual Cleanup
@@ -582,4 +473,4 @@ terraform destroy
 - [Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
 - [GKE Networking](https://cloud.google.com/kubernetes-engine/docs/concepts/network-overview)
 - [Vault on GKE](https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-google-cloud-gke)
-- [GKE Cost Optimization](https://cloud.google.com/architecture/best-practices-for-running-cost-effective-kubernetes-applications-on-gke)
+- [k9s Documentation](https://k9scli.io/)

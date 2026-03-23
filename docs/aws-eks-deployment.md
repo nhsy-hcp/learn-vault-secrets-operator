@@ -16,6 +16,7 @@ This guide provides detailed instructions for deploying HashiCorp Vault and Vaul
 | terraform | 1.6+ | [Install Guide](https://developer.hashicorp.com/terraform/install) |
 | task | 3.30+ | [Install Guide](https://taskfile.dev/installation/) |
 | jq | 1.6+ | [Install Guide](https://jqlang.github.io/jq/download/) |
+| k9s | 0.27+ (optional) | [Install Guide](https://k9scli.io/topics/install/) |
 
 ### AWS Account Requirements
 
@@ -143,162 +144,143 @@ vault-ent/
 ### Step 1: Verify Prerequisites
 
 ```bash
-# Check tool versions
+# Check tool versions and AWS configuration
 task prerequisites
-
-# Expected output:
-# ✓ AWS CLI version 2.x.x
-# ✓ kubectl version 1.x.x
-# ✓ helm version 3.x.x
-# ✓ terraform version 1.x.x
-# ✓ task version 3.x.x
-# ✓ jq version 1.x.x
 ```
 
 ### Step 2: Deploy EKS Infrastructure
 
 ```bash
-# Navigate to EKS directory
-cd eks/
-
-# Initialize Terraform
-terraform init
-
-# Review planned changes
-terraform plan
-
-# Deploy infrastructure (15-20 minutes)
-terraform apply
-
-# Or use the automated task
-cd ..
+# Deploy complete EKS infrastructure (25+ minutes)
 task eks:all
+
+# Wait 3 minutes for stabilization
+sleep 180
+
+# Verify cluster connectivity
+kubectl cluster-info
+
+# Open k9s for interactive cluster exploration
+k9s
 ```
 
-**What Gets Created:**
-- VPC with public and private subnets
-- Internet Gateway and NAT Gateways
-- EKS cluster with control plane
-- Two managed node groups
-- EBS CSI driver add-on
-- AWS Load Balancer Controller
-- IAM roles and policies
-- Security groups
-- CloudWatch log groups
-
-### Step 3: Configure kubectl
+### Step 3: Install Vault and VSO
 
 ```bash
-# Update kubeconfig
-aws eks update-kubeconfig --region us-west-2 --name vault-eks-cluster
+# Install and configure Vault and VSO
+task install
 
-# Verify cluster access
-kubectl get nodes
-
-# Expected output:
-# NAME                                       STATUS   ROLES    AGE   VERSION
-# ip-10-0-1-xxx.us-west-2.compute.internal   Ready    <none>   5m    v1.28.x
-# ip-10-0-2-xxx.us-west-2.compute.internal   Ready    <none>   5m    v1.28.x
-# ip-10-0-3-xxx.us-west-2.compute.internal   Ready    <none>   5m    v1.28.x
-# ip-10-0-4-xxx.us-west-2.compute.internal   Ready    <none>   5m    v1.28.x
-
-# Verify EBS CSI driver
-kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
-
-# Verify AWS Load Balancer Controller
-kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
-```
-
-### Step 4: Install Vault and VSO
-
-```bash
-# Install Vault with EKS-specific storage class
-task install:vault
-
-# Verify Vault installation
+# Wait for pods to stabilize
 kubectl get pods -n vault
-
-# Expected output:
-# NAME                                    READY   STATUS    RESTARTS   AGE
-# vault-0                                 1/1     Running   0          2m
-# vault-agent-injector-xxxxxxxxxx-xxxxx   1/1     Running   0          2m
-
-# Check Vault PVC
-kubectl get pvc -n vault
-
-# Expected output:
-# NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-# data-vault-0   Bound    pvc-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx   10Gi       RWO            gp2            2m
-
-# Install VSO
-task install:vso
-
-# Verify VSO installation
 kubectl get pods -n vault-secrets-operator
 ```
 
-### Step 5: Configure Vault
+### Step 4: Deploy Secret Applications
 
 ```bash
-# Initialize and configure Vault
-task config:vault
-
-# This performs:
-# - Vault initialization
-# - Unsealing
-# - Root token configuration
-# - Namespace creation (vso, tn001)
-# - Secret engine setup (KV, Database, PKI, Transit)
-# - Kubernetes auth configuration
-# - Policy creation
-# - Role configuration
-```
-
-### Step 6: Deploy Secrets
-
-```bash
-# Deploy all secret types
+# Deploy all secret types and applications
 task secrets
-
-# This creates:
-# - Static secret applications (static-app-1, static-app-2, static-app-3)
-# - Dynamic secret application (dynamic-app)
-# - CSI secret application (csi-app)
-# - PostgreSQL database for dynamic secrets
 ```
 
-### Step 7: Verify Deployment
+### Step 5: Verify Complete Deployment
 
 ```bash
-# Run complete verification
+# Run comprehensive verification
 task verify
+```
 
-# Individual verifications
-task verify:pods          # Check all pod status
-task verify:static-secret # Verify static secret sync
-task verify:dynamic-secret # Verify dynamic secret generation
-task verify:csi-secret    # Verify CSI volume mounts
+## Monitoring with k9s
 
-# Check Vault service external IP
-kubectl get svc -n vault vault
+k9s provides a terminal-based UI for managing Kubernetes clusters:
 
-# Expected output:
-# NAME    TYPE           CLUSTER-IP      EXTERNAL-IP                                                              PORT(S)
-# vault   LoadBalancer   10.100.xxx.xxx  xxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.elb.us-west-2.amazonaws.com      8200:xxxxx/TCP,8201:xxxxx/TCP
+```bash
+# Launch k9s
+k9s
+
+# Useful k9s commands:
+# :pods          - View all pods
+# :ns            - Switch namespace
+# :vault         - Jump to vault namespace
+# :events        - View cluster events
+# :pvc           - View persistent volume claims
+# :svc           - View services
+# /              - Filter resources
+# l              - View logs
+# d              - Describe resource
+# Ctrl+d         - Delete resource
+# ?              - Help
+```
+
+## Post-Deployment Operations
+
+### Accessing Vault UI
+
+```bash
+# Get root token and open UI
+task ui
+```
+
+### Secret Rotation
+
+```bash
+# Rotate static secrets
+task rotate:static-secret
+
+# Rotate dynamic database secrets
+task rotate:dynamic-secret
+
+# Rotate CSI secrets
+task rotate:csi:secret
+```
+
+### Monitoring and Debugging
+
+```bash
+# View Vault logs
+task logs
+
+# View VSO logs
+task logs:vso
+
+# Check Kubernetes events
+task events
+
+# Port forward Vault for local access
+task port-forward
+
+# List Kubernetes auth configuration
+task list:k8s-auth
+
+# List identity entities
+task list:identity-entities
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
+#### 0. kubectl Access Issues
+
+**Symptom:** kubectl commands fail with connection errors or "Unable to connect to the server"
+
+**Solution:**
+```bash
+# Refresh kubectl credentials
+task eks:eks-credentials
+
+# Verify cluster access
+kubectl cluster-info
+
+# Check current context
+kubectl config current-context
+
+# Manually update kubeconfig if needed
+aws eks update-kubeconfig --name eks-hcp --region eu-west-1
+```
+
 #### 1. Cluster Creation Fails
 
 **Symptom:** Terraform apply fails during EKS cluster creation
-
-**Possible Causes:**
-- Insufficient IAM permissions
-- Service quota limits reached
-- Invalid VPC configuration
 
 **Solution:**
 ```bash
@@ -308,10 +290,8 @@ aws iam get-user
 # Check service quotas
 aws service-quotas list-service-quotas --service-code eks
 
-# Review Terraform logs
-terraform apply -debug
-
 # Clean up and retry
+cd eks/
 terraform destroy
 terraform apply
 ```
@@ -320,34 +300,18 @@ terraform apply
 
 **Symptom:** Nodes show as NotReady or don't appear
 
-**Possible Causes:**
-- Security group misconfiguration
-- IAM role issues
-- Subnet routing problems
-
 **Solution:**
 ```bash
 # Check node status
 kubectl get nodes
 
-# Describe node for events
-kubectl describe node <node-name>
-
 # Check node group status
-aws eks describe-nodegroup --cluster-name vault-eks-cluster --nodegroup-name system-nodes
-
-# View node group logs
-aws eks describe-nodegroup --cluster-name vault-eks-cluster --nodegroup-name system-nodes --query 'nodegroup.health'
+aws eks describe-nodegroup --cluster-name eks-hcp --nodegroup-name system-nodes
 ```
 
 #### 3. EBS CSI Driver Issues
 
 **Symptom:** PVCs stuck in Pending state
-
-**Possible Causes:**
-- EBS CSI driver not installed
-- IAM role misconfiguration
-- Storage class issues
 
 **Solution:**
 ```bash
@@ -357,38 +321,13 @@ kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
 # Check CSI driver logs
 kubectl logs -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
 
-# Verify IAM role
-kubectl describe sa ebs-csi-controller-sa -n kube-system
-
 # Check PVC events
 kubectl describe pvc <pvc-name> -n <namespace>
-
-# Manually create test PVC
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: test-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: gp2
-  resources:
-    requests:
-      storage: 1Gi
-EOF
-
-kubectl get pvc test-pvc
 ```
 
 #### 4. Load Balancer Not Provisioning
 
 **Symptom:** Vault service stuck in Pending, no EXTERNAL-IP
-
-**Possible Causes:**
-- AWS Load Balancer Controller not installed
-- IAM role issues
-- Subnet tagging missing
 
 **Solution:**
 ```bash
@@ -398,13 +337,6 @@ kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-cont
 # Check controller logs
 kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
 
-# Verify subnet tags
-aws ec2 describe-subnets --filters "Name=vpc-id,Values=<vpc-id>" --query 'Subnets[*].[SubnetId,Tags]'
-
-# Required tags:
-# Public subnets: kubernetes.io/role/elb=1
-# Private subnets: kubernetes.io/role/internal-elb=1
-
 # Check service events
 kubectl describe svc vault -n vault
 ```
@@ -412,11 +344,6 @@ kubectl describe svc vault -n vault
 #### 5. Vault Pods Not Starting
 
 **Symptom:** Vault pods in CrashLoopBackOff or Pending
-
-**Possible Causes:**
-- PVC not bound
-- Insufficient node resources
-- License file missing
 
 **Solution:**
 ```bash
@@ -429,14 +356,33 @@ kubectl describe pod vault-0 -n vault
 # Check PVC status
 kubectl get pvc -n vault
 
-# Check node resources
-kubectl top nodes
-
 # Verify license file
 ls -la vault-ent/vault-license.lic
 
 # Check Vault logs
 kubectl logs vault-0 -n vault
+```
+
+#### 6. Secret Synchronization Issues
+
+**Symptom:** VaultStaticSecret or VaultDynamicSecret not syncing
+
+**Solution:**
+```bash
+# Check VSO logs
+task logs:vso
+
+# Verify VaultConnection
+kubectl get vaultconnection -A
+
+# Verify VaultAuth
+kubectl get vaultauth -A
+
+# Describe VaultStaticSecret
+kubectl describe vaultstaticsecret -n static-app-1
+
+# Check Vault auth configuration
+task list:k8s-auth
 ```
 
 ### Debugging Commands
@@ -447,29 +393,17 @@ kubectl cluster-info
 kubectl get nodes -o wide
 
 # EKS cluster details
-aws eks describe-cluster --name vault-eks-cluster
+aws eks describe-cluster --name eks-hcp
 
 # Node group details
-aws eks list-nodegroups --cluster-name vault-eks-cluster
-aws eks describe-nodegroup --cluster-name vault-eks-cluster --nodegroup-name system-nodes
+aws eks list-nodegroups --cluster-name eks-hcp
+aws eks describe-nodegroup --cluster-name eks-hcp --nodegroup-name system-nodes
 
-# VPC and networking
-aws ec2 describe-vpcs --filters "Name=tag:Name,Values=vault-eks-vpc"
-aws ec2 describe-subnets --filters "Name=vpc-id,Values=<vpc-id>"
-aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=<vpc-id>"
+# Check all events
+kubectl get events -A --sort-by='.lastTimestamp'
 
-# Security groups
-aws ec2 describe-security-groups --filters "Name=vpc-id,Values=<vpc-id>"
-
-# Load balancers
-aws elbv2 describe-load-balancers
-aws elbv2 describe-target-groups
-
-# CloudWatch logs
-aws logs describe-log-groups --log-group-name-prefix /aws/eks/vault-eks-cluster
-
-# IAM roles
-aws iam list-roles --query 'Roles[?contains(RoleName, `eks`) || contains(RoleName, `EBS`) || contains(RoleName, `LoadBalancer`)]'
+# Or use k9s for interactive exploration
+k9s
 ```
 
 ## Cleanup
@@ -477,15 +411,15 @@ aws iam list-roles --query 'Roles[?contains(RoleName, `eks`) || contains(RoleNam
 ### Automated Cleanup
 
 ```bash
-# Destroy all resources (automated, no confirmation)
+# Destroy all resources (20+ minutes)
 task eks:destroy:auto
 
-# This will:
-# 1. Delete all Kubernetes resources
-# 2. Destroy EKS cluster
-# 3. Delete VPC and networking
-# 4. Remove IAM roles and policies
-# 5. Delete CloudWatch log groups
+# Wait 3 minutes for asynchronous deletions
+sleep 180
+
+# Verify cluster is destroyed
+aws eks describe-cluster --name eks-hcp --region eu-west-1
+# Expected: ResourceNotFoundException
 ```
 
 ### Manual Cleanup
@@ -506,3 +440,4 @@ terraform destroy
 - [AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/)
 - [EBS CSI Driver](https://github.com/kubernetes-sigs/aws-ebs-csi-driver)
 - [Vault on EKS](https://developer.hashicorp.com/vault/tutorials/kubernetes/kubernetes-amazon-eks)
+- [k9s Documentation](https://k9scli.io/)
