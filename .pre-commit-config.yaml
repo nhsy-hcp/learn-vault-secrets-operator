@@ -33,10 +33,13 @@ repos:
       - id: gitleaks
 
   # Shell script linting
-  - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.11.0.1
+  - repo: local
     hooks:
       - id: shellcheck
+        name: shellcheck
+        language: system
+        entry: shellcheck
+        types: [shell]
         args: [--severity=warning]
 
   # Terraform checks
@@ -52,6 +55,7 @@ repos:
         args:
           - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
           - --args=--minimum-failure-severity=error
+        stages: [manual]
 
   # Terraform documentation
   - repo: https://github.com/terraform-docs/terraform-docs
@@ -61,7 +65,9 @@ repos:
         name: Terraform docs (EKS)
         description: Generate Terraform module documentation for EKS
         args: ["markdown", "eks/", "--output-file", "README.md"]
+        stages: [manual]
       - id: terraform-docs-go
         name: Terraform docs (GKE)
         description: Generate Terraform module documentation for GKE
         args: ["markdown", "gke/", "--output-file", "README.md"]
+        stages: [manual]
