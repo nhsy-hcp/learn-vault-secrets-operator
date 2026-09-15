@@ -71,7 +71,7 @@ jobs:
           install /tmp/gitleaks /usr/local/bin/gitleaks
 
       - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
 
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
@@ -84,6 +84,7 @@ jobs:
     needs: lint
     if: ${{ needs.lint.outputs.act != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
 
@@ -93,7 +94,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "${{ secrets.VAULT_LICENSE }}" | base64 -d > vault-ent/vault-license.lic
+          echo "${{ secrets.VAULT_LICENSE }}" > vault-ent/vault-license.lic
 
       - name: Add Helm repos
         run: |
@@ -108,27 +109,30 @@ jobs:
       - name: Configure and deploy secrets
         run: task secrets
 
+      - name: VSO logs
+        if: ${{ always() }}
+        run: kubectl logs -n vault-secrets-operator -l app.kubernetes.io/name=vault-secrets-operator --tail=1000 || true
+
       - name: Debug on failure
         if: ${{ failure() }}
         shell: bash
         run: |
-          set -euo pipefail
           {
             echo "## Debug: CI failure"
             echo
             echo "### Pod status"
             echo '```'
-            kubectl get pods -A
+            kubectl get pods -A || true
             echo '```'
             echo
             echo "### Vault logs"
             echo '```'
-            kubectl logs -n vault -l app.kubernetes.io/name=vault --tail=100 || true
+            kubectl logs -n vault -l app.kubernetes.io/name=vault --tail=1000 || true
             echo '```'
             echo
             echo "### VSO logs"
             echo '```'
-            kubectl logs -n vault-secrets-operator -l app.kubernetes.io/name=vault-secrets-operator --tail=100 || true
+            kubectl logs -n vault-secrets-operator -l app.kubernetes.io/name=vault-secrets-operator --tail=1000 || true
             echo '```'
             echo
             echo "### Kubernetes events"
@@ -136,7 +140,3 @@ jobs:
             kubectl get events -A --sort-by='.lastTimestamp' | tail -50 || true
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
-
-      - name: Uninstall
-        if: ${{ always() }}
-        run: task uninstall
