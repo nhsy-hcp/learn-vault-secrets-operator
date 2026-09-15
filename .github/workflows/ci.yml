@@ -1,0 +1,142 @@
+---
+name: ci
+
+"on":
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - ".plans/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    outputs:
+      act: ${{ steps.runner.outputs.act }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Detect act
+        id: runner
+        shell: bash
+        run: echo "act=${ACT:-false}" >>"$GITHUB_OUTPUT"
+
+      - uses: arduino/setup-task@v3
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Install tflint
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH=$(dpkg --print-architecture)
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          curl -sSLo /tmp/tflint.zip \
+            "https://github.com/terraform-linters/tflint/releases/latest/download/tflint_${OS}_${ARCH}.zip"
+          unzip -o /tmp/tflint.zip -d /tmp tflint
+          install /tmp/tflint /usr/local/bin/tflint
+
+      - name: Install terraform-docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH=$(dpkg --print-architecture)
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          VERSION=$(curl -sSL https://api.github.com/repos/terraform-docs/terraform-docs/releases/latest \
+            | grep '"tag_name"' | cut -d'"' -f4)
+          curl -sSLo /tmp/terraform-docs.tar.gz \
+            "https://github.com/terraform-docs/terraform-docs/releases/download/${VERSION}/terraform-docs-${VERSION}-${OS}-${ARCH}.tar.gz"
+          tar -xzf /tmp/terraform-docs.tar.gz -C /tmp terraform-docs
+          install /tmp/terraform-docs /usr/local/bin/terraform-docs
+
+      - name: Install gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          VERSION=$(curl -sSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
+            | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
+          curl -sSLo /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_${VERSION}_${OS}_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          install /tmp/gitleaks /usr/local/bin/gitleaks
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run lint
+        run: task lint
+
+  test:
+    name: e2e
+    needs: lint
+    if: ${{ needs.lint.outputs.act != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: arduino/setup-task@v3
+
+      - name: Write Vault Enterprise license
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.VAULT_LICENSE }}" > vault-ent/vault-license.lic
+
+      - name: Add Helm repos
+        run: |
+          helm repo add hashicorp https://helm.releases.hashicorp.com
+          helm repo update
+
+      - uses: medyagh/setup-minikube@v0.0.21
+
+      - name: Install Vault and VSO
+        run: task install
+
+      - name: Configure and deploy secrets
+        run: task secrets
+
+      - name: VSO logs
+        if: ${{ always() }}
+        run: kubectl logs -n vault-secrets-operator -l app.kubernetes.io/name=vault-secrets-operator --tail=1000 || true
+
+      - name: Debug on failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          {
+            echo "## Debug: CI failure"
+            echo
+            echo "### Pod status"
+            echo '```'
+            kubectl get pods -A || true
+            echo '```'
+            echo
+            echo "### Vault logs"
+            echo '```'
+            kubectl logs -n vault -l app.kubernetes.io/name=vault --tail=1000 || true
+            echo '```'
+            echo
+            echo "### VSO logs"
+            echo '```'
+            kubectl logs -n vault-secrets-operator -l app.kubernetes.io/name=vault-secrets-operator --tail=1000 || true
+            echo '```'
+            echo
+            echo "### Kubernetes events"
+            echo '```'
+            kubectl get events -A --sort-by='.lastTimestamp' | tail -50 || true
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
