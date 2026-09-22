@@ -43,8 +43,17 @@ Comprehensive documentation is available in the `docs/` directory:
 - **[Google GKE Deployment](docs/gke-deployment.md)** - Complete guide for deploying on Google GKE with Terraform, including VPC setup, Workload Identity, and cost optimization
 - **[Minikube Local Development](docs/minikube-local-dev.md)** - Guide for local development and testing with Minikube, including setup, configuration, and debugging
 
+### Example Walkthroughs
+One document per example in `vault-ent/`, each with an architecture diagram, its Vault configuration, and its synchronization flow:
+
+- **[Static Secrets](docs/static-secrets.md)** - KV v2 secret synced to a Kubernetes `Secret` across several namespaces via one glob-matched Vault role
+- **[Dynamic Secrets](docs/dynamic-secrets.md)** - Leased PostgreSQL credentials and PKI certificates generated on demand
+- **[CSI Secrets](docs/csi-secrets.md)** - Secrets mounted straight into the pod filesystem, with no Kubernetes `Secret` created
+- **[Shared PKI Secrets](docs/pki-secrets.md)** - One shared `VaultAuth` and service account issuing a certificate per namespace
+- **[Vault Agent Sidecar](docs/vault-agent-secrets.md)** *(optional)* - Secret delivered as a rendered file by an Agent init container, without VSO
+
 ### Technical Documentation
-- **[Architecture](docs/architecture.md)** - Comprehensive architecture documentation covering authentication flows, secret synchronization patterns, and platform-specific configurations
+- **[Architecture](docs/architecture.md)** - System-level architecture: components, the centralized JWT token reviewer, RBAC and platform-specific configurations, with an index of the example walkthroughs above
 - **[Troubleshooting](docs/troubleshooting.md)** - Detailed troubleshooting procedures for common issues across all components and platforms
 - **[Testing & Validation](docs/testing-validation.md)** - Complete testing procedures, validation checklists, and integration testing scenarios
 - **[FAQ](docs/faq.md)** - Frequently asked questions covering general topics, deployment, security, and troubleshooting
@@ -121,7 +130,9 @@ task verify
 ├── vault-ent/                      # Vault Enterprise configurations
 │   ├── static-secrets/            # Static secret manifests
 │   ├── dynamic-secrets/           # Dynamic secret manifests
-│   └── csi/                       # CSI driver configurations
+│   ├── csi-secrets/               # CSI driver configurations
+│   ├── pki-secrets/               # Shared PKI certificate manifests
+│   └── vault-agent-secrets/       # Vault Agent sidecar demo (optional)
 ├── eks/                           # EKS infrastructure (Terraform)
 └── gke/                           # GKE infrastructure (Terraform)
 ```
@@ -144,6 +155,9 @@ Each application type has a dedicated Vault role with specific policies and serv
   - Uses glob pattern matching for namespaces (`static-app-*`) to support multiple static app instances
 - **Dynamic Secrets**: Role `dynamic-secret` with policy `dynamic-secret`, service account `dynamic-app-sa`
 - **CSI Integration**: Role `csi-secret` with policy `csi-secret`, service account `csi-app-sa`
+- **Shared PKI**: Role `pki-secret` with policy `pki-secret`, service account `pki-app-sa`
+  - Uses glob pattern matching for namespaces (`pki-app-*`) to support multiple app instances
+  - Unlike the other demos, all instances share a **single** `VaultAuth` (`pki-auth`) in the operator namespace
 
 #### Authentication Flow
 1. **JWT Token Reviewer**: A centralized service account with `system:auth-delegator` permissions provides a long-lived JWT token
@@ -175,6 +189,15 @@ Each application type has a dedicated Vault role with specific policies and serv
 4. Vault CSI Provider fetches secrets from `kvv2/db-creds`
 5. Secrets are mounted directly to pod filesystem at `/secrets/static`
 6. No Kubernetes `Secret` resource is created
+
+#### Shared PKI Secrets Flow
+1. VSO controller watches `VaultPKISecret` resources across multiple PKI app instances
+2. A **single** `VaultAuth` (`pki-auth`) in the `vault-secrets-operator` namespace is referenced cross-namespace by every instance as `vaultAuthRef: vault-secrets-operator/pki-auth`
+3. VSO mints a token for the `pki-app-sa` service account **in the requesting namespace** (not the VaultAuth's namespace), and authenticates to `k8s-auth-mount` in `tn001` using the `pki-secret` role
+4. The `pki-secret` role uses glob pattern matching (`pki-app-*`) to authorize all PKI app instances
+5. VSO requests a certificate from `pki/issue/pki-app`
+6. The certificate is synced to a `kubernetes.io/tls` Secret (`pki-app-tls`) in each namespace
+7. Application pod mounts the certificate at `/etc/tls`; VSO restarts the Deployment on renewal via `rolloutRestartTargets`
 
 #### Encrypted Client Cache
 1. VSO controller authenticates to Vault's `vso` namespace
@@ -208,6 +231,8 @@ The Vault installation automatically detects the Kubernetes platform and configu
 - `static-app-1`, `static-app-2`, `static-app-3` - Multiple static KV secrets demonstration instances (configurable count)
 - `dynamic-app` - Dynamic database and PKI secrets demonstration
 - `csi-app` - CSI driver integration demonstration
+- `pki-app-1`, `pki-app-2`, `pki-app-3` - Shared PKI certificate demonstration instances (configurable count)
+- `vault-agent-app` - Vault Agent sidecar demonstration (optional; not deployed by `task all`)
 
 ### Vault Configuration
 
@@ -243,6 +268,25 @@ The Vault installation automatically detects the Kubernetes platform and configu
 - Auth role: `csi-secret` (dedicated role with `csi-secret` policy only)
 - Service account: `csi-app-sa` (in namespace `csi-app`)
 
+**Shared PKI Secrets:**
+- Namespace: `tn001`
+- Mount: `pki` (shared with the Dynamic Secrets demo, which uses the `example-dot-com` role)
+- Issuing role: `pki-app` with `allowed_domains="svc.cluster.local,svc,example.com"`, `allow_subdomains=true`, wildcards permitted
+- Auth role: `pki-secret` (dedicated role with `pki-secret` policy only)
+- Service account: `pki-app-sa` (in namespaces `pki-app-1`, `pki-app-2`, `pki-app-3`)
+- Bound claims: Uses glob pattern `pki-app-*` to authorize multiple instances
+- One shared `VaultAuth` (`pki-auth`) in `vault-secrets-operator`, with `allowedNamespaces: ["*"]`
+
+**Vault Agent Sidecar (optional):**
+- Namespace: `tn001`
+- Mount: `kvv2`
+- Path: `kvv2/webapp/config` (same secret as the Static Secrets demo)
+- Auth role: `vault-agent-secret` (dedicated role with `vault-agent-secret` policy only)
+- Service account: `vault-agent-sa` (in namespace `vault-agent-app`)
+- Not part of `task secrets` / `task all` - run `task config:vault-agent-secret`,
+  `task deploy:vault-agent-secret` and `task verify:vault-agent-secret` explicitly
+- Requires `task config:static-secret` first, which creates `k8s-auth-mount` and the KV secret
+
 **Encrypted Client Cache:**
 - Namespace: `vso`
 - Transit engine: `vso-transit`
@@ -266,7 +310,7 @@ task install:vso
 # Configure Vault
 task config:vault
 
-# Deploy all secret types
+# Deploy all secret types (static, dynamic, CSI, shared PKI)
 task secrets
 ```
 
@@ -287,6 +331,12 @@ task verify:dynamic-secret
 
 # Verify CSI integration
 task verify:csi-secret
+
+# Verify shared PKI certificates
+task verify:pki-secret
+
+# Verify the optional Vault Agent demo
+task verify:vault-agent-secret
 ```
 
 ### Debugging
@@ -360,6 +410,10 @@ kubectl describe vaultstaticsecret vault-kv-app -n static-app
 kubectl get vaultdynamicsecret -A
 kubectl describe vaultdynamicsecret vso-db-demo -n dynamic-app
 
+# VaultPKISecret resources
+kubectl get vaultpkisecret -A
+kubectl describe vaultpkisecret pki-app-cert -n pki-app-1
+
 # VaultAuth resources
 kubectl get vaultauth -A
 
@@ -377,6 +431,11 @@ kubectl describe secret secretkv -n static-app
 # Dynamic secrets
 kubectl get secret vso-db-demo -n dynamic-app
 kubectl get secret vso-pki-demo -n dynamic-app
+
+# Shared PKI certificates (inspect subject and SANs)
+kubectl get secret pki-app-tls -n pki-app-1
+kubectl get secret pki-app-tls -n pki-app-1 -o jsonpath='{.data.tls\.crt}' \
+  | base64 -d | openssl x509 -noout -subject -issuer -enddate -ext subjectAltName
 ```
 
 ### View Application Logs
@@ -461,7 +520,12 @@ This file is automatically created and populated by `task init:vault`.
 - All Vault initialization keys are stored in `vault-init.json`
 - Root token is automatically added to `.env` file
 - JWT token reviewer uses long-lived service account token for cluster persistence
-- Rotate secrets regularly using `task rotate:static-secret`
+- Rotate secrets regularly using `task rotate:static-secret`, `task rotate:dynamic-secret`, `task rotate:csi:secret` or `task rotate:pki-secret`
+- The shared PKI demo (`vault-ent/pki-secrets/`) shows one `VaultAuth`, one Vault auth role and one PKI
+  issuing role serving several namespaces. Sharing one service account **name** keeps the Vault client
+  configuration simple and reduces onboarding friction: a new namespace needs only a `ServiceAccount`
+  and a `VaultPKISecret`. It is **not** a per-tenant authorization boundary - every `pki-app-*`
+  namespace authenticates as the same Vault identity and can request any name the issuing role allows.
 
 ## License
 

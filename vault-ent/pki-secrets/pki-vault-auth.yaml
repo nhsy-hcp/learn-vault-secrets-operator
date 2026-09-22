@@ -1,0 +1,17 @@
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: pki-auth
+  namespace: vault-secrets-operator
+spec:
+  vaultConnectionRef: default
+  method: jwt
+  mount: k8s-auth-mount
+  namespace: tn001
+  allowedNamespaces: ["*"]
+  jwt:
+    role: pki-secret
+    serviceAccount: pki-app-sa
+    audiences:
+      - vault

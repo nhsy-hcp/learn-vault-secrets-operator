@@ -258,6 +258,7 @@ task secrets
 # - Static secret applications (static-app-1, static-app-2, static-app-3)
 # - Dynamic secret application (dynamic-app)
 # - CSI secret application (csi-app)
+# - Shared PKI applications (pki-app-1, pki-app-2, pki-app-3)
 # - PostgreSQL database for dynamic secrets
 
 # Verify all namespaces
@@ -271,6 +272,9 @@ kubectl get namespaces
 # static-app-3
 # dynamic-app
 # csi-app
+# pki-app-1
+# pki-app-2
+# pki-app-3
 ```
 
 ### Step 7: Verify Deployment
@@ -284,6 +288,7 @@ task verify:pods          # Check all pod status
 task verify:static-secret # Verify static secret sync
 task verify:dynamic-secret # Verify dynamic secret generation
 task verify:csi-secret    # Verify CSI volume mounts
+task verify:pki-secret    # Verify shared PKI certificates
 
 # Check all pods across namespaces
 kubectl get pods -A

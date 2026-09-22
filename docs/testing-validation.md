@@ -17,6 +17,7 @@ task verify
 # - Static secret validation
 # - Dynamic secret validation
 # - CSI secret validation
+# - Shared PKI certificate validation
 ```
 
 ### Individual Component Tests
@@ -33,6 +34,9 @@ task verify:dynamic-secret
 
 # Verify CSI secrets
 task verify:csi-secret
+
+# Verify shared PKI certificates
+task verify:pki-secret
 ```
 
 ## Manual Validation Checklist
@@ -660,6 +664,69 @@ kubectl get secret -n csi-app | grep -v "default-token"
 **Checklist:**
 - [ ] No Kubernetes Secret resource created for CSI secrets
 - [ ] Secrets only exist in pod filesystem
+
+### Shared PKI Secrets Validation
+
+**Verify all instances received a certificate from the one shared role:**
+
+```bash
+kubectl get vaultpkisecret -A
+# Expected: pki-app-cert SYNCED=True in pki-app-1, pki-app-2, pki-app-3
+```
+
+**Verify only one VaultAuth serves all of them:**
+
+```bash
+kubectl get vaultauth -A
+# Expected: a single pki-auth in vault-secrets-operator, and NO VaultAuth in any pki-app-* namespace
+```
+
+**Inspect the issued certificates:**
+
+```bash
+for i in 1 2 3; do
+  echo "== pki-app-${i} =="
+  kubectl get secret pki-app-tls -n "pki-app-${i}" -o jsonpath='{.data.tls\.crt}' \
+    | base64 -d \
+    | openssl x509 -noout -subject -issuer -enddate -ext subjectAltName
+done
+```
+
+Expected: each subject names its own namespace and is issued by `CN=example.com`. `pki-app-1` and
+`pki-app-2` get concrete names (`pki-app.pki-app-N.svc.cluster.local`); `pki-app-3` gets a wildcard
+(`*.pki-app-3.svc.cluster.local`). Every SAN list also contains `pki-app-N.example.com`.
+
+**Verify the shared Vault configuration:**
+
+```bash
+export VAULT_TOKEN=$(jq -r '.root_token' vault-init.json)
+
+# One auth role, bound to the pki-app-* glob
+kubectl exec vault-0 -n vault -- sh -c \
+  "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/k8s-auth-mount/role/pki-secret"
+
+# One issuing role; allowed_domains is what constrains the certs
+kubectl exec vault-0 -n vault -- sh -c \
+  "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read pki/roles/pki-app"
+```
+
+**Verify certificate rotation:**
+
+```bash
+task rotate:pki-secret
+```
+
+This deletes each `pki-app-tls` Secret; VSO re-issues within a few seconds and restarts the
+Deployments via `rolloutRestartTargets`. Compare `notAfter` before and after.
+
+**Verify the shared identity (expected, not a defect):**
+
+```bash
+task list:identity-entities | grep -A3 pki-app-sa
+```
+
+All `pki-app-*` namespaces share a single Vault entity alias named `pki-app-sa`. This is inherent to
+sharing a service account name and is why the demo is not a per-tenant authorization boundary.
 
 ## Integration Testing
 

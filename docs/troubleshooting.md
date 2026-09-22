@@ -547,6 +547,60 @@ kubectl get deployment static-app -n static-app-1 -o yaml | grep -A 20 env
 kubectl set env deployment/static-app -n static-app-1 --from=secret/secretkv
 ```
 
+### Shared PKI Issues
+
+**Symptom: `vaultConnectionRef must be set on resources in the "vault-secrets-operator" namespace`**
+
+The shared `VaultAuth` lives in the operator's own namespace, where VSO requires an explicit
+connection reference. Ensure `pki-auth` sets `vaultConnectionRef: default`.
+
+**Symptom: `ServiceAccount "pki-app-sa" not found`**
+
+VSO resolves `spec.jwt.serviceAccount` in the namespace of the **requesting** `VaultPKISecret`, not in
+the `VaultAuth`'s namespace. Create `pki-app-sa` in the app namespace:
+
+```bash
+kubectl get sa pki-app-sa -n pki-app-1
+```
+
+**Symptom: `claim "/kubernetes.io/namespace" does not match any associated bound claim values`**
+
+The namespace does not match the auth role's `pki-app-*` glob. Check the role:
+
+```bash
+kubectl exec vault-0 -n vault -- sh -c \
+  "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/k8s-auth-mount/role/pki-secret"
+```
+
+Note the auth role is named `pki-secret`, while the PKI **issuing** role is named `pki-app`.
+
+**Symptom: `common name ... not allowed by this role`**
+
+The requested name falls outside `allowed_domains` on `pki/roles/pki-app`
+(`svc.cluster.local,svc,example.com` with `allow_subdomains=true`). Remember that
+`<name>.<ns>.svc` is a subdomain of `svc`, not of `svc.cluster.local` - both entries are required.
+
+```bash
+kubectl exec vault-0 -n vault -- sh -c \
+  "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read pki/roles/pki-app"
+```
+
+**Symptom: `target namespace ... is not allowed by kind=VaultAuth`**
+
+`allowedNamespaces` on the shared `VaultAuth` excludes the namespace. The demo ships `["*"]`. Note
+this field does **not** support globs - a value like `pki-app-*` is treated as a literal namespace
+name and matches nothing.
+
+**Symptom: pod stuck in `ContainerCreating`**
+
+The Deployment mounts `pki-app-tls`, which does not exist until VSO issues the certificate. Resolve
+the underlying sync error above; the pod recovers on its own.
+
+**Symptom: certificates no longer chain to the CA**
+
+`task config:dynamic-secret` regenerates the `pki` root CA, which both demos share. Re-run
+`task rotate:pki-secret` to force re-issuance from the new CA.
+
 ## Platform-Specific Issues
 
 ### Minikube Issues

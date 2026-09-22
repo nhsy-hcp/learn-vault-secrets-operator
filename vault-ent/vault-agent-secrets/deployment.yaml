@@ -1,0 +1,80 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault-agent-app
+  namespace: vault-agent-app
+  labels:
+    app: vault-agent-app
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: vault-agent-app
+  template:
+    metadata:
+      labels:
+        app: vault-agent-app
+    spec:
+      serviceAccountName: vault-agent-sa
+      volumes:
+        - name: vault-secrets
+          emptyDir:
+            medium: Memory
+        - name: vault-agent-config
+          configMap:
+            name: vault-agent-config
+        - name: jwt-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: jwt-token
+                  expirationSeconds: 3600
+                  audience: vault
+      initContainers:
+        - name: vault-agent-init
+          image: hashicorp/vault:latest
+          args:
+            - agent
+            - -config=/etc/vault/vault-agent-init.hcl
+          # restartPolicy: Always
+          volumeMounts:
+            - name: vault-secrets
+              mountPath: /vault/secrets
+            - name: vault-agent-config
+              mountPath: /etc/vault
+            - name: jwt-token
+              mountPath: /var/run/secrets
+          env:
+            - name: VAULT_LOG_LEVEL
+              value: info
+      containers:
+        - name: app
+          image: alpine:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                echo "=== Vault Agent Secrets ==="
+                echo ""
+                if [ -f /vault/secrets/config.txt ]; then
+                  echo "Contents of /vault/secrets/config.txt:"
+                  cat /vault/secrets/config.txt
+                else
+                  echo "Waiting for secrets to be rendered..."
+                fi
+                echo ""
+                echo "=== Directory listing /vault/secrets ==="
+                ls -la /vault/secrets/ 2>/dev/null || echo "Directory not found"
+                echo ""
+                echo "Waiting 1 minute before next check... ($(date))"
+                echo ""
+                sleep 60
+              done
+          volumeMounts:
+            - name: vault-secrets
+              mountPath: /vault/secrets
+              readOnly: true

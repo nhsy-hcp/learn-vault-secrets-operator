@@ -8,6 +8,7 @@ vars:
   vault_version_tag: "2.1.0-ent"
   vso_version_tag: "1.5.1"
   static_app_count: 3
+  pki_app_count: 3
 
 dotenv:
   - .env
@@ -56,6 +57,9 @@ tasks:
       - task: config:csi-secret
       - task: deploy:csi-secret
       - task: verify:csi-secret
+      - task: config:pki-secret
+      - task: deploy:pki-secret
+      - task: verify:pki-secret
 
   verify:
     cmds:
@@ -63,6 +67,7 @@ tasks:
       - task: verify:static-secret
       - task: verify:dynamic-secret
       - task: verify:csi-secret
+      - task: verify:pki-secret
 
   # ============================================================================
   # Prerequisites & Setup
@@ -326,6 +331,62 @@ tasks:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
 
+  config:pki-secret:
+    preconditions:
+      - test -f vault-init.json
+    desc: Configure Vault for shared PKI certificates in tn001 namespace
+    cmds:
+      - |
+        for i in $(seq 1 {{ .pki_app_count }}); do
+          kubectl create ns "pki-app-${i}" || true
+        done
+      # The pki mount is shared with config:dynamic-secret, so only seed the root CA if absent
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable pki || echo 'PKI already enabled'"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets tune -max-lease-ttl=87600h pki"
+      - |
+        if kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read pki/cert/ca" >/dev/null 2>&1; then
+          echo "PKI root CA already present - reusing it"
+        else
+          echo "Generating PKI root CA"
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write -field=certificate pki/root/generate/internal \
+            common_name=\"example.com\" \
+            ttl=87600h"
+        fi
+      - kubectl cp vault-ent/pki-secrets/pki-secret.hcl vault-0:/tmp/pki-secret.hcl -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write pki-secret /tmp/pki-secret.hcl"
+      - kubectl cp vault-ent/pki-secrets/pki-secret-role.json vault-0:/tmp/pki-secret-role.json -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/pki-secret @/tmp/pki-secret-role.json"
+      # allowed_domains defines which certs may be minted; "svc" covers the short in-cluster name
+      - |
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write pki/roles/pki-app \
+          allowed_domains=\"svc.cluster.local,svc,example.com\" \
+          allow_subdomains=true \
+          allow_bare_domains=false \
+          allow_wildcard_certificates=true \
+          allow_ip_sans=false \
+          allow_localhost=false \
+          key_type=rsa \
+          key_bits=2048 \
+          ttl=1h \
+          max_ttl={{ .pki_max_ttl }}"
+    env:
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
+  config:vault-agent-secret:
+    preconditions:
+      - test -f vault-init.json
+    desc: Configure Vault policy and auth role for the Vault Agent demo (optional)
+    cmds:
+      - kubectl create ns vault-agent-app || true
+      - kubectl cp vault-ent/vault-agent-secrets/vault-agent-secret.hcl vault-0:/tmp/vault-agent-secret.hcl -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write vault-agent-secret /tmp/vault-agent-secret.hcl"
+      - kubectl cp vault-ent/vault-agent-secrets/vault-agent-secret-role.json vault-0:/tmp/vault-agent-secret-role.json -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/vault-agent-secret @/tmp/vault-agent-secret-role.json"
+    env:
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
   # ============================================================================
   # VSO Installation
   # ============================================================================
@@ -432,6 +493,56 @@ tasks:
       - kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=csi-app --timeout=2m -n csi-app
       - sleep 10
 
+  deploy:pki-secret:
+    desc: Deploy PKI certificate resources for all app instances
+    cmds:
+      # One shared VaultAuth for all app instances
+      - kubectl apply -f vault-ent/pki-secrets/pki-vault-auth.yaml
+      - sleep 3
+      - |
+        for i in $(seq 1 {{ .pki_app_count }}); do
+          APP_NAME="pki-app-${i}"
+          LB_NAME="${APP_NAME}.example.com"
+
+          # The last instance demonstrates a wildcard certificate
+          if [ "${i}" -eq {{ .pki_app_count }} ]; then
+            COMMON_NAME="*.${APP_NAME}.svc.cluster.local"
+            ALT_NAME="*.${APP_NAME}.svc"
+          else
+            COMMON_NAME="pki-app.${APP_NAME}.svc.cluster.local"
+            ALT_NAME="pki-app.${APP_NAME}.svc"
+          fi
+
+          echo "Deploying ${APP_NAME} (CN=${COMMON_NAME})..."
+          sed "s/\${APP_NAME}/${APP_NAME}/g" \
+            vault-ent/pki-secrets/templates/service-account.yaml.tpl | kubectl apply -f -
+          sed -e "s/\${APP_NAME}/${APP_NAME}/g" \
+              -e "s/\${COMMON_NAME}/${COMMON_NAME}/g" \
+              -e "s/\${ALT_NAME}/${ALT_NAME}/g" \
+              -e "s/\${LB_NAME}/${LB_NAME}/g" \
+            vault-ent/pki-secrets/templates/pki-secret.yaml.tpl | kubectl apply -f -
+          sleep 5
+          sed "s/\${APP_NAME}/${APP_NAME}/g" \
+            vault-ent/pki-secrets/templates/deployment.yaml.tpl | kubectl apply -f -
+        done
+      - sleep 5
+      - |
+        for i in $(seq 1 {{ .pki_app_count }}); do
+          APP_NAME="pki-app-${i}"
+          echo "Waiting for ${APP_NAME} pods to be ready..."
+          kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=pki-app --timeout=2m -n "${APP_NAME}"
+        done
+
+  deploy:vault-agent-secret:
+    desc: Deploy the Vault Agent sidecar demo application (optional)
+    cmds:
+      - kubectl apply -f vault-ent/vault-agent-secrets/service-account.yaml
+      - kubectl apply -f vault-ent/vault-agent-secrets/configmap.yaml
+      - sleep 2
+      - kubectl apply -f vault-ent/vault-agent-secrets/deployment.yaml
+      - sleep 5
+      - kubectl wait --for=condition=Ready pod -l app=vault-agent-app --timeout=2m -n vault-agent-app
+
   # ============================================================================
   # Verification
   # ============================================================================
@@ -511,6 +622,45 @@ tasks:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
 
+  verify:pki-secret:
+    preconditions:
+      - test -f vault-init.json
+    desc: Verify PKI certificates were issued for all app instances
+    cmds:
+      - echo "=== One shared VaultAuth serves every app namespace ==="
+      - kubectl get vaultauth -A
+      - |
+        for i in $(seq 1 {{ .pki_app_count }}); do
+          APP_NAME="pki-app-${i}"
+          echo ""
+          echo "=== Verifying ${APP_NAME} ==="
+          echo "--- VaultPKISecret resource ---"
+          kubectl get vaultpkisecret -n "${APP_NAME}" pki-app-cert -o yaml
+          echo ""
+          echo "--- Certificate issued into ${APP_NAME} ---"
+          kubectl get secret -n "${APP_NAME}" pki-app-tls -o jsonpath='{.data.tls\.crt}' \
+            | base64 -d \
+            | openssl x509 -noout -subject -issuer -enddate -ext subjectAltName
+        done
+      - echo "\n=== The single shared auth role in Vault namespace tn001 ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/k8s-auth-mount/role/pki-secret"
+      - echo "\n=== The single shared PKI issuing role (allowed_domains defines what may be minted) ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read pki/roles/pki-app"
+    env:
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+    silent: true
+
+  verify:vault-agent-secret:
+    desc: Verify Vault Agent rendered the secret into the pod (optional)
+    cmds:
+      - echo "=== Pod Status ==="
+      - kubectl get pods -n vault-agent-app
+      - echo "\n=== Application Logs ==="
+      - kubectl logs -n vault-agent-app -l app=vault-agent-app -c app --tail=30
+      - echo "\n=== Vault Agent Init Logs ==="
+      - kubectl logs -n vault-agent-app -l app=vault-agent-app -c vault-agent-init --tail=20 || true
+
   # ============================================================================
   # Operations
   # ============================================================================
@@ -555,10 +705,28 @@ tasks:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
 
+  rotate:pki-secret:
+    desc: Rotate PKI certificates by deleting the synced TLS secrets
+    cmds:
+      - echo "Deleting synced TLS secrets to trigger VSO to issue new certificates..."
+      - |
+        for i in $(seq 1 {{ .pki_app_count }}); do
+          kubectl delete secret pki-app-tls -n "pki-app-${i}" --ignore-not-found
+        done
+      - echo "Waiting for VSO to re-issue certificates..."
+      - sleep 15
+      - task: verify:pki-secret
+
   restart:csi-secret:
     desc: Rollout restart VSO CSI demo application
     cmds:
       - kubectl rollout restart deployment csi-app -n csi-app
+
+  restart:vault-agent-secret:
+    desc: Rollout restart the Vault Agent demo application
+    cmds:
+      - kubectl rollout restart deployment vault-agent-app -n vault-agent-app
+      - kubectl rollout status deployment vault-agent-app -n vault-agent-app
 
   # ============================================================================
   # Code Quality
@@ -730,14 +898,30 @@ tasks:
           kubectl delete vaultstaticsecret --all -n "${APP_NAME}" --ignore-not-found || true
           kubectl delete vaultauth --all -n "${APP_NAME}" --ignore-not-found || true
         done
+      - |
+        for i in $(seq 1 {{ .pki_app_count }}); do
+          APP_NAME="pki-app-${i}"
+          echo "Cleaning up ${APP_NAME}..."
+          kubectl delete deployment --all -n "${APP_NAME}" --ignore-not-found
+          kubectl delete pods --all -n "${APP_NAME}" --force --ignore-not-found
+          kubectl delete vaultpkisecret --all -n "${APP_NAME}" --ignore-not-found || true
+        done
+      - kubectl delete vaultauth pki-auth -n vault-secrets-operator --ignore-not-found || true
+      - kubectl delete deployment --all -n vault-agent-app --ignore-not-found
+      - kubectl delete pods --all -n vault-agent-app --force --ignore-not-found
       - sleep 5
       - |
         for i in $(seq 1 {{ .static_app_count }}); do
           APP_NAME="static-app-${i}"
           kubectl delete ns "${APP_NAME}" --ignore-not-found
         done
+      - |
+        for i in $(seq 1 {{ .pki_app_count }}); do
+          kubectl delete ns "pki-app-${i}" --ignore-not-found
+        done
       - kubectl delete ns dynamic-app --ignore-not-found
       - kubectl delete ns csi-app --ignore-not-found
+      - kubectl delete ns vault-agent-app --ignore-not-found
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable k8s-auth-mount" || true
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable db" || true
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable pki" || true

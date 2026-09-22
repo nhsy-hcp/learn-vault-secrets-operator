@@ -74,10 +74,10 @@ This document provides a comprehensive architectural overview of the Vault Secre
 **PKI Engine**
 - Mount path: `pki`
 - Namespace: `tn001`
-- Role: `example-dot-com`
-- Allowed domains: `*.example.com`
-- TTL: 24 hours
-- Max TTL: 720 hours (30 days)
+- Shared by two demos, with a role each:
+  - `example-dot-com` (Dynamic Secrets) - allowed domains `*.example.com`, TTL 24h, max TTL 720h
+  - `pki-app` (Shared PKI) - allowed domains `svc.cluster.local,svc,example.com` with
+    `allow_subdomains=true` and wildcards permitted, TTL 1h, max TTL 4h
 
 **Transit Engine**
 - Mount path: `vso-transit`
@@ -114,6 +114,8 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 - `static-app-1`, `static-app-2`, `static-app-3`: Static secret demonstrations
 - `dynamic-app`: Dynamic secret demonstrations
 - `csi-app`: CSI driver integration demonstration
+- `pki-app-1`, `pki-app-2`, `pki-app-3`: Shared PKI certificate demonstrations
+- `vault-agent-app`: Vault Agent sidecar demonstration (optional)
 
 #### Service Accounts
 
@@ -129,6 +131,9 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 - `static-app-sa`: Static secret applications (namespaces: `static-app-*`)
 - `dynamic-app-sa`: Dynamic secret application (namespace: `dynamic-app`)
 - `csi-app-sa`: CSI driver application (namespace: `csi-app`)
+- `pki-app-sa`: Shared PKI applications (namespaces: `pki-app-*`) - one ServiceAccount object per
+  namespace, all sharing the same name
+- `vault-agent-sa`: Vault Agent sidecar application (namespace: `vault-agent-app`)
 
 ## Authentication Architecture
 
@@ -197,35 +202,10 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 
 #### Vault Roles and Policies
 
-**Static Secrets Role**
-- Role name: `static-secret`
-- Policy: `static-secret`
-- Bound service accounts: `static-app-sa`
-- Bound namespaces: `static-app-*` (glob pattern)
-- Token TTL: 1 hour
-- Permissions:
-  - Read: `kvv2/data/webapp/config`
-  - List: `kvv2/metadata/webapp/config`
-
-**Dynamic Secrets Role**
-- Role name: `dynamic-secret`
-- Policy: `dynamic-secret`
-- Bound service accounts: `dynamic-app-sa`
-- Bound namespaces: `dynamic-app`
-- Token TTL: 1 hour
-- Permissions:
-  - Read: `db/creds/dev-postgres`
-  - Read: `pki/issue/example-dot-com`
-
-**CSI Secrets Role**
-- Role name: `csi-secret`
-- Policy: `csi-secret`
-- Bound service accounts: `csi-app-sa`
-- Bound namespaces: `csi-app`
-- Token TTL: 1 hour
-- Permissions:
-  - Read: `kvv2/data/db-creds`
-  - List: `kvv2/metadata/db-creds`
+Every example gets a dedicated Vault role bound to its own service account and namespace, so a
+compromised workload can only reach its own secrets. The per-example role and policy definitions
+live in the example documents linked under
+[Secret Synchronization Patterns](#secret-synchronization-patterns).
 
 **VSO Operator Role**
 - Role name: `auth-role-operator`
@@ -239,167 +219,16 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 
 ## Secret Synchronization Patterns
 
-### Static Secrets Flow
+Each example has its own document covering its architecture diagram, Vault configuration, and
+synchronization and data flows:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. User creates VaultStaticSecret CRD                      │
-│     - Specifies Vault path: kvv2/webapp/config              │
-│     - References VaultAuth for authentication               │
-│     - Defines destination K8s Secret name                   │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. VSO Controller watches VaultStaticSecret                │
-│     - Detects new/updated resource                          │
-│     - Reads VaultAuth configuration                         │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. VSO authenticates to Vault                              │
-│     - Uses app service account token                        │
-│     - Authenticates via k8s-auth-mount                      │
-│     - Receives Vault token with static-secret policy        │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. VSO reads secret from Vault                             │
-│     - Fetches kvv2/data/webapp/config                       │
-│     - Retrieves all key-value pairs                         │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. VSO creates/updates Kubernetes Secret                   │
-│     - Creates Secret in application namespace               │
-│     - Populates with Vault secret data                      │
-│     - Sets owner reference for lifecycle management         │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  6. Application pod consumes secret                         │
-│     - Mounts as environment variables                       │
-│     - Mounts as volume at /secrets/static                   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Dynamic Secrets Flow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. User creates VaultDynamicSecret CRD                     │
-│     - Specifies Vault path: db/creds/dev-postgres           │
-│     - Defines renewal and rotation settings                 │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. VSO Controller watches VaultDynamicSecret               │
-│     - Detects new/updated resource                          │
-│     - Reads VaultAuth configuration                         │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. VSO authenticates to Vault                              │
-│     - Uses app service account token                        │
-│     - Receives Vault token with dynamic-secret policy       │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. VSO requests dynamic credentials                        │
-│     - Calls db/creds/dev-postgres                           │
-│     - Vault generates new DB credentials                    │
-│     - Credentials have TTL (default: 1 hour)                │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. VSO creates Kubernetes Secret                           │
-│     - Stores username and password                          │
-│     - Includes lease information                            │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  6. VSO manages credential lifecycle                        │
-│     - Renews lease before expiration                        │
-│     - Rotates credentials based on policy                   │
-│     - Updates K8s Secret with new credentials               │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  7. Application pod consumes credentials                    │
-│     - Mounts as volume at /secrets/dynamic/db               │
-│     - Automatically gets updated credentials                │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### CSI Driver Flow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. User creates SecretProviderClass                        │
-│     - Defines Vault path and parameters                     │
-│     - Specifies authentication details                      │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. User creates Pod with CSI volume                        │
-│     - References SecretProviderClass                        │
-│     - Defines mount path                                    │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. Kubelet schedules pod                                   │
-│     - Detects CSI volume requirement                        │
-│     - Calls CSI node driver                                 │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. CSI node driver intercepts mount                        │
-│     - Reads SecretProviderClass                             │
-│     - Initiates Vault authentication                        │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. Vault CSI Provider authenticates                        │
-│     - Uses pod's service account token                      │
-│     - Authenticates via k8s-auth-mount                      │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  6. Vault CSI Provider fetches secrets                      │
-│     - Reads from kvv2/data/db-creds                         │
-│     - Formats secrets per SecretProviderClass               │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  7. CSI driver mounts secrets to pod                        │
-│     - Writes secrets to tmpfs volume                        │
-│     - Mounts at specified path (/secrets/static)            │
-│     - No Kubernetes Secret resource created                 │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  8. Application reads secrets from filesystem               │
-│     - Secrets available at mount path                       │
-│     - Secrets exist only in pod memory                      │
-└─────────────────────────────────────────────────────────────┘
-```
+| Example | Delivery mechanism | Manifests | Document |
+|---|---|---|---|
+| Static secrets | `VaultStaticSecret` → Kubernetes `Secret` | `vault-ent/static-secrets/` | [static-secrets.md](static-secrets.md) |
+| Dynamic secrets | `VaultDynamicSecret` / `VaultPKISecret` → `Secret`, leased | `vault-ent/dynamic-secrets/` | [dynamic-secrets.md](dynamic-secrets.md) |
+| CSI secrets | CSI driver → pod tmpfs, no `Secret` | `vault-ent/csi-secrets/` | [csi-secrets.md](csi-secrets.md) |
+| Shared PKI | One shared `VaultAuth` → `kubernetes.io/tls` `Secret` per namespace | `vault-ent/pki-secrets/` | [pki-secrets.md](pki-secrets.md) |
+| Vault Agent (optional) | Agent init container → rendered file, no `Secret` | `vault-ent/vault-agent-secrets/` | [vault-agent-secrets.md](vault-agent-secrets.md) |
 
 ## Platform-Specific Architecture
 
@@ -527,105 +356,6 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 - In-memory token caching
 - Reduces authentication overhead
 - Automatic renewal before expiration
-
-## Data Flow Diagrams
-
-### Static Secret Data Flow
-
-```
-┌──────────────┐
-│   Vault KV   │
-│   Storage    │
-└──────┬───────┘
-       │
-       │ 1. VSO reads secret
-       ▼
-┌──────────────┐
-│     VSO      │
-│  Controller  │
-└──────┬───────┘
-       │
-       │ 2. Creates/updates K8s Secret
-       ▼
-┌──────────────┐
-│  Kubernetes  │
-│    Secret    │
-└──────┬───────┘
-       │
-       │ 3. Mounted to pod
-       ▼
-┌──────────────┐
-│ Application  │
-│     Pod      │
-└──────────────┘
-```
-
-### Dynamic Secret Data Flow
-
-```
-┌──────────────┐
-│   Vault DB   │
-│    Engine    │
-└──────┬───────┘
-       │
-       │ 1. VSO requests credentials
-       ▼
-┌──────────────┐     2. Generates     ┌──────────────┐
-│     VSO      │◄────credentials──────│  PostgreSQL  │
-│  Controller  │                      │   Database   │
-└──────┬───────┘                      └──────────────┘
-       │
-       │ 3. Creates K8s Secret with credentials
-       ▼
-┌──────────────┐
-│  Kubernetes  │
-│    Secret    │
-└──────┬───────┘
-       │
-       │ 4. Mounted to pod
-       ▼
-┌──────────────┐
-│ Application  │
-│     Pod      │
-└──────────────┘
-       │
-       │ 5. Uses credentials
-       ▼
-┌──────────────┐
-│  PostgreSQL  │
-│   Database   │
-└──────────────┘
-```
-
-### CSI Secret Data Flow
-
-```
-┌──────────────┐
-│   Vault KV   │
-│   Storage    │
-└──────┬───────┘
-       │
-       │ 1. CSI Provider reads secret
-       ▼
-┌──────────────┐
-│  Vault CSI   │
-│   Provider   │
-└──────┬───────┘
-       │
-       │ 2. Writes to tmpfs
-       ▼
-┌──────────────┐
-│   tmpfs      │
-│   Volume     │
-└──────┬───────┘
-       │
-       │ 3. Mounted to pod
-       ▼
-┌──────────────┐
-│ Application  │
-│     Pod      │
-└──────────────┘
-```
 
 ## References
 
