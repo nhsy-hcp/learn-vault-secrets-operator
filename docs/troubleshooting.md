@@ -598,8 +598,17 @@ the underlying sync error above; the pod recovers on its own.
 
 **Symptom: certificates no longer chain to the CA**
 
-`task config:dynamic-secret` regenerates the `pki` root CA, which both demos share. Re-run
-`task rotate:pki-secret` to force re-issuance from the new CA.
+The `pki` root CA is shared by the dynamic secrets and shared PKI demos. Both config tasks seed it
+only when `pki/cert/ca` is absent, so re-running them will not replace it. If the CA genuinely has
+changed - for example the mount was disabled and re-enabled by `task uninstall:apps` - the
+previously issued certificates no longer chain. Re-run `task rotate:pki-secret` to force
+re-issuance from the current CA:
+
+```bash
+kubectl exec vault-0 -n vault -- sh -c \
+  "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read -field=certificate pki/cert/ca" \
+  | openssl x509 -noout -serial
+```
 
 ## Platform-Specific Issues
 

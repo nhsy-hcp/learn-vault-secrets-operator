@@ -293,10 +293,16 @@ tasks:
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable -path=db database || echo 'Database secrets engine already enabled'"
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable pki || echo 'PKI already enabled'"
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets tune -max-lease-ttl=87600h pki"
+      # The pki mount is shared with config:pki-secret, so only seed the root CA if absent
       - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write -field=certificate pki/root/generate/internal \
-          common_name=\"example.com\" \
-          ttl=87600h"
+        if kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read pki/cert/ca" >/dev/null 2>&1; then
+          echo "PKI root CA already present - reusing it"
+        else
+          echo "Generating PKI root CA"
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write -field=certificate pki/root/generate/internal \
+            common_name=\"example.com\" \
+            ttl=87600h"
+        fi
       - |
         kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write pki/roles/example-dot-com \
           allowed_domains=example.com \

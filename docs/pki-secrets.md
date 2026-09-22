@@ -104,9 +104,13 @@ certificates with different lifetimes and CAs; sharing one here is a lab conveni
 - Note: a single `VaultAuth` (`pki-auth`) in `vault-secrets-operator` serves every bound namespace
 
 The `pki` mount is shared with the [dynamic secrets example](dynamic-secrets.md), which uses the
-`example-dot-com` role on the same mount. Note that `task config:dynamic-secret` regenerates the root
-CA unguarded, so re-running it after this demo orphans the issued certificates - `task
-rotate:pki-secret` forces re-issuance from the new CA.
+`example-dot-com` role on the same mount. Both `config:pki-secret` and `config:dynamic-secret` seed
+the root CA only when `pki/cert/ca` is absent, so they converge on whichever CA already exists and
+can be run in either order, repeatedly, without invalidating issued certificates.
+
+The corollary is that the CA is sticky: neither task will ever rotate it. To start from a new CA,
+tear the mount down first with `task uninstall:apps` (which disables `pki`), then re-run the config
+tasks and `task rotate:pki-secret` to re-issue.
 
 ## Synchronisation flow
 
