@@ -387,7 +387,7 @@ tasks:
   config:entity-secret:
     preconditions:
       - test -f vault-init.json
-    desc: Configure Vault pre-created identity entities with team metadata in tn001 namespace
+    desc: Create entity-app namespaces, seed team KV secrets, policy, role and pre-created entities
     cmds:
       - |
         for app in $(jq -r '.[].name' {{ .entity_apps_file }}); do
@@ -1029,7 +1029,7 @@ tasks:
       - rm vault-init.json || true
 
   clean:namespaces:
-    desc: Delete application namespaces
+    desc: Delete vault and vault-secrets-operator namespaces
     cmds:
       - kubectl delete ns vault-secrets-operator --ignore-not-found
       - kubectl delete ns vault --ignore-not-found

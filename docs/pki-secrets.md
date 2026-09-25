@@ -59,7 +59,8 @@ Three consequences matter:
 1. **It is not a tenancy boundary.** All `pki-app-*` namespaces authenticate as the same Vault
    identity - a single entity alias named `pki-app-sa` - so any of them can request any name the
    issuing role allows, including another namespace's. Use cases needing per-tenant authorization
-   should not share a service account this way.
+   should give each namespace its own service account name, as the
+   [entity metadata example](entity-secrets.md) does.
 2. **The service account must exist in each consuming namespace.** VSO resolves
    `spec.jwt.serviceAccount` in the namespace of the requesting resource, not the `VaultAuth`'s.
    Placing `pki-app-sa` only in `vault-secrets-operator` fails with
@@ -114,9 +115,9 @@ tasks and `task rotate:pki-secret` to re-issue.
 
 ## Synchronisation flow
 
-Unlike the static, dynamic and CSI demos - which each create their own `VaultAuth` per namespace -
-the PKI demo uses **one** `VaultAuth`, **one** Vault auth role and **one** PKI issuing role for every
-`pki-app-*` namespace.
+Unlike the static, dynamic, CSI and entity demos - which each create their own `VaultAuth` per
+namespace - the PKI demo uses **one** `VaultAuth`, **one** Vault auth role and **one** PKI issuing
+role for every `pki-app-*` namespace.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -165,48 +166,27 @@ the PKI demo uses **one** `VaultAuth`, **one** Vault auth role and **one** PKI i
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Why the service account is shared**
-
-Sharing one service account *name* across the app namespaces is scoped to the PKI use case. It keeps
-the Vault client configuration simple and reduces onboarding friction: adding a namespace needs only a
-`ServiceAccount` and a `VaultPKISecret`, with no new `VaultAuth`, Vault auth role or policy.
-
-Three consequences are worth understanding:
-
-1. **It is not a tenancy boundary.** All `pki-app-*` namespaces authenticate as the same Vault
-   identity - a single entity alias named `pki-app-sa` on the `k8s-auth-mount` accessor - so any of
-   them can request any name the issuing role allows, including another namespace's. Use cases that
-   need per-tenant authorization should not share a service account this way.
-2. **The service account must exist in each consuming namespace.** VSO resolves
-   `spec.jwt.serviceAccount` in the namespace of the requesting resource, not in the `VaultAuth`'s
-   namespace. Placing `pki-app-sa` only in `vault-secrets-operator` fails with
-   `ServiceAccount "pki-app-sa" not found`.
-3. **The policy grants issuance only.** `pki/revoke` is deliberately not granted, because one shared
-   policy plus a serial number read from any peer's certificate would otherwise let one namespace
-   revoke another's. The `VaultPKISecret` therefore does not set `revoke: true`.
-
-**Certificate shapes**
-
-`pki-app-3` requests a wildcard (`*.pki-app-3.svc.cluster.local`) while the others request concrete
-names, so the example shows both coming out of the same role. Every certificate also carries an
-`pki-app-N.example.com` SAN, so one `pki-app-tls` Secret could serve both the pod and an external load
-balancer. To front it with an Ingress, reference the Secret as `spec.tls[].secretName` from the **same
-namespace** - which is where VSO already writes it. Nothing trusts this CA, so verification is
-explicit:
+## Verification
 
 ```bash
-kubectl exec vault-0 -n vault -- sh -c \
-  "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read -field=certificate pki/cert/ca" > root.crt
-curl --cacert root.crt --resolve pki-app-1.example.com:443:$(minikube ip) \
-  https://pki-app-1.example.com
+task verify:pki-secret
 ```
 
-In production, in-cluster mTLS and public load-balancer termination normally want separate
-certificates with different lifetimes and CAs; sharing one here is a lab convenience.
+This shows the single `pki-auth` `VaultAuth` (none in any `pki-app-*` namespace), each
+`VaultPKISecret`, each issued certificate, and the shared auth and issuing roles. Expect each
+subject to name its own namespace, issued by `CN=example.com`: `pki-app-1` and `pki-app-2` get
+concrete names (`pki-app.pki-app-N.svc.cluster.local`), `pki-app-3` a wildcard
+(`*.pki-app-3.svc.cluster.local`), and every SAN list includes `pki-app-N.example.com`.
+
+```bash
+kubectl get vaultpkisecret -A                        # pki-app-cert synced in every pki-app-* namespace
+task list:identity-entities | grep -A3 pki-app-sa    # one shared alias - expected, not a defect
+task rotate:pki-secret                               # deletes pki-app-tls; VSO re-issues and restarts
+```
 
 ## Related
 
 - [Architecture overview](architecture.md)
 - [Dynamic secrets example](dynamic-secrets.md) - the other role on the `pki` mount
-- [Testing and validation](testing-validation.md)
+- [Entity metadata example](entity-secrets.md) - a unique service account name per app instead
 - [Troubleshooting](troubleshooting.md)

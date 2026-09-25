@@ -48,6 +48,10 @@ flowchart LR
 Each namespace gets its **own** `VaultAuth`; what is shared is the Vault role, which admits any
 namespace matching `static-app-*`.
 
+`task config:static-secret` also creates the `kvv2` mount and the `k8s-auth-mount` JWT auth mount
+in `tn001`, which the [entity metadata](entity-secrets.md) and
+[Vault Agent](vault-agent-secrets.md) examples depend on - run it first.
+
 ## Vault configuration
 
 **Static Secrets Role**
@@ -141,5 +145,5 @@ namespace matching `static-app-*`.
 ## Related
 
 - [Architecture overview](architecture.md)
-- [Testing and validation](testing-validation.md)
+- [Entity metadata example](entity-secrets.md) - same `kvv2` mount, one entity per app
 - [Troubleshooting](troubleshooting.md)

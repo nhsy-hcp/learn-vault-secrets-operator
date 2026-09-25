@@ -1,369 +1,158 @@
-# Architecture Documentation
+# Architecture
 
-## Overview
-
-This document provides a comprehensive architectural overview of the Vault Secrets Operator (VSO) integration with Kubernetes, covering deployment patterns, authentication flows, and component interactions across Minikube, Amazon EKS, and Google GKE platforms.
+How Vault Enterprise, the Vault Secrets Operator (VSO) and the demo applications fit together.
+Each example has its own walkthrough - see [Examples](#examples).
 
 ![Architecture Diagram](images/diagram.png)
 
-## System Architecture
-
-### High-Level Architecture
+## High-level view
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                     Kubernetes Cluster                         │
-│                                                                │
-│  ┌──────────────┐         ┌─────────────────────────────────┐  │
-│  │   Vault      │         │  Vault Secrets Operator (VSO)   │  │
-│  │  Enterprise  │◄────────┤      Controller                 │  │
-│  │              │         │                                 │  │
-│  │  Namespaces: │         │  - Watches CRDs                 │  │
-│  │  - vso       │         │  - Syncs secrets                │  │
-│  │  - tn001     │         │  - Manages auth                 │  │
-│  └──────────────┘         └─────────────────────────────────┘  │
-│         │                              │                       │
-│         │                              │                       │
-│  ┌──────▼──────────────────────────────▼────────────────────┐  │
-│  │           Application Namespaces                         │  │
-│  │                                                          │  │
-│  │  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐     │  │
-│  │  │ static-app-*│  │ dynamic-app  │  │   csi-app    │     │  │
-│  │  │             │  │              │  │              │     │  │
-│  │  │ VaultAuth   │  │  VaultAuth   │  │  VaultAuth   │     │  │
-│  │  │ VaultStatic │  │  VaultDynamic│  │  CSI Volume  │     │  │
-│  │  │ Secret      │  │  Secret      │  │  Mount       │     │  │
-│  │  └─────────────┘  └──────────────┘  └──────────────┘     │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          Kubernetes Cluster                          │
+│                                                                      │
+│  ┌──────────────────┐        ┌──────────────────────────────────┐    │
+│  │ Vault Enterprise │◄───────┤ Vault Secrets Operator (VSO)     │    │
+│  │ (vault ns)       │        │ (vault-secrets-operator ns)      │    │
+│  │  namespaces:     │        │  - watches VSO custom resources  │    │
+│  │  - vso           │        │  - logs in with app SA tokens    │    │
+│  │  - tn001         │        │  - syncs Secrets / CSI volumes   │    │
+│  └──────────────────┘        └──────────────────────────────────┘    │
+│           ▲                                  │                       │
+│           │ Vault Agent (direct login)       ▼                       │
+│  ┌────────┴─────────────────────────────────────────────────────┐    │
+│  │ Application namespaces                                       │    │
+│  │  static-app-*   VaultAuth + VaultStaticSecret                │    │
+│  │  dynamic-app    VaultAuth + VaultDynamicSecret/VaultPKISecret│    │
+│  │  csi-app        VaultAuth + CSISecrets (CSI volume)          │    │
+│  │  pki-app-*      VaultPKISecret (shared VaultAuth in VSO ns)  │    │
+│  │  entity-app-*   VaultAuth + VaultStaticSecret                │    │
+│  │  vault-agent-app  Vault Agent init container (optional)      │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-## Component Architecture
+## Vault
 
-### Vault Enterprise Components
+| Namespace | Mount | Type | Used by |
+|---|---|---|---|
+| `vso` | `k8s-auth-mount` | kubernetes (token reviewer) | VSO controller (role `auth-role-operator`) |
+| `vso` | `vso-transit` | transit, key `vso-client-cache` | VSO encrypted client cache |
+| `tn001` | `k8s-auth-mount` | jwt (OIDC discovery) | every demo application |
+| `tn001` | `kvv2` | kv-v2 | static, CSI, entity, Vault Agent |
+| `tn001` | `db` | database, role `dev-postgres` | dynamic |
+| `tn001` | `pki` | pki, roles `example-dot-com` and `pki-app` | dynamic, shared PKI |
 
-#### Namespaces
-- **vso**: VSO-specific configuration and transit encryption
-  - Transit engine: `vso-transit`
-  - Encryption key: `vso-client-cache`
-  - Auth role: `auth-role-operator`
+KV v2 paths in `tn001`:
 
-- **tn001**: Tenant namespace for application secrets
-  - KV v2 mount: `kvv2`
-  - Database mount: `db`
-  - PKI mount: `pki`
-  - Kubernetes auth mount: `k8s-auth-mount`
+- `kvv2/webapp/config` - static secrets and Vault Agent
+- `kvv2/db-creds` - CSI secrets
+- `kvv2/teams/<team>/config` - entity metadata, one per team in `apps.json`
 
-#### Secret Engines
+## Vault Secrets Operator
 
-**KV v2 (Key-Value)**
-- Mount path: `kvv2`
-- Namespace: `tn001`
-- Paths:
-  - `kvv2/webapp/config` - Static application secrets
-  - `kvv2/db-creds` - CSI driver secrets
-
-**Database Engine**
-- Mount path: `db`
-- Namespace: `tn001`
-- Role: `dev-postgres`
-- Connection: PostgreSQL in `dynamic-app` namespace
-- TTL: 1 hour (default)
-- Max TTL: 24 hours
-
-**PKI Engine**
-- Mount path: `pki`
-- Namespace: `tn001`
-- Shared by two demos, with a role each:
-  - `example-dot-com` (Dynamic Secrets) - allowed domains `*.example.com`, TTL 24h, max TTL 720h
-  - `pki-app` (Shared PKI) - allowed domains `svc.cluster.local,svc,example.com` with
-    `allow_subdomains=true` and wildcards permitted, TTL 1h, max TTL 4h
-
-**Transit Engine**
-- Mount path: `vso-transit`
-- Namespace: `vso`
-- Key: `vso-client-cache`
-- Purpose: Encrypt VSO client cache data
-
-### Vault Secrets Operator (VSO)
-
-#### Controller Components
-- **Namespace**: `vault-secrets-operator`
-- **Deployment**: `vault-secrets-operator-controller-manager`
-- **Replicas**: 1 (can be scaled for HA)
-- **Service Account**: `vault-secrets-operator-controller-manager`
-
-#### Custom Resource Definitions (CRDs)
-1. **VaultConnection**: Defines connection to Vault server
-2. **VaultAuth**: Configures authentication method
-3. **VaultStaticSecret**: Syncs static KV secrets
-4. **VaultDynamicSecret**: Generates dynamic credentials
-5. **SecretProviderClass**: CSI driver configuration (Vault CSI Provider)
-
-#### Reconciliation Loop
-```
-Watch CRDs → Authenticate to Vault → Fetch/Generate Secrets →
-Sync to K8s Secrets → Update Status → Cache Results → Repeat
-```
-
-### Kubernetes Components
-
-#### Namespaces
-- `vault`: Vault server and CSI provider pods
-- `vault-secrets-operator`: VSO controller
-- `static-app-1`, `static-app-2`, `static-app-3`: Static secret demonstrations
-- `dynamic-app`: Dynamic secret demonstrations
-- `csi-app`: CSI driver integration demonstration
-- `pki-app-1`, `pki-app-2`, `pki-app-3`: Shared PKI certificate demonstrations
-- `entity-app-1`, `entity-app-2`, `entity-app-3`: Entity metadata demonstrations
-- `vault-agent-app`: Vault Agent sidecar demonstration (optional)
-
-#### Service Accounts
-
-**JWT Token Reviewer** (Centralized)
-- Name: `vault`
-- Namespace: `vault`
-- ClusterRoleBinding: `vault-reviewer-binding`
-- ClusterRole: `system:auth-delegator`
-- Token Secret: `vault-token-secret` (long-lived)
-- Purpose: Token review for all Vault Kubernetes auth mounts
-
-**Application Service Accounts**
-- `static-app-sa`: Static secret applications (namespaces: `static-app-*`)
-- `dynamic-app-sa`: Dynamic secret application (namespace: `dynamic-app`)
-- `csi-app-sa`: CSI driver application (namespace: `csi-app`)
-- `pki-app-sa`: Shared PKI applications (namespaces: `pki-app-*`) - one ServiceAccount object per
-  namespace, all sharing the same name
-- `entity-app-N-sa`: Entity metadata applications (namespaces: `entity-app-*`) - a unique name per
-  namespace, so each logs in as its own alias bound to a pre-created entity
-- `vault-agent-sa`: Vault Agent sidecar application (namespace: `vault-agent-app`)
-
-## Authentication Architecture
-
-### Centralized JWT Token Reviewer Pattern
+- Namespace `vault-secrets-operator`, deployment and service account
+  `vault-secrets-operator-controller-manager`, 1 replica.
+- A default `VaultConnection` to `http://vault.vault.svc.cluster.local:8200` is created by the Helm
+  chart (`vault-ent/vault-operator-values.yaml`), with the CSI driver enabled.
+- Custom resources used by the demos: `VaultConnection`, `VaultAuth`, `VaultStaticSecret`,
+  `VaultDynamicSecret`, `VaultPKISecret`, `CSISecrets`.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Kubernetes Cluster                       │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  vault namespace                                     │   │
-│  │  ┌────────────────────────────────────────────────┐  │   │
-│  │  │  Service Account: vault                        │  │   │
-│  │  │  ClusterRole: system:auth-delegator            │  │   │
-│  │  │  Token Secret: vault-token-secret (long-lived) │  │   │
-│  │  └────────────────────────────────────────────────┘  │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                          │                                  │
-│                          │ JWT Token for Review             │
-│                          ▼                                  │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              Vault (tn001 namespace)                │    │
-│  │  ┌──────────────────────────────────────────────┐   │    │
-│  │  │  Kubernetes Auth Mount: k8s-auth-mount       │   │    │
-│  │  │  - Uses vault SA token for token review      │   │    │
-│  │  │  - Validates app SA tokens                   │   │    │
-│  │  └──────────────────────────────────────────────┘   │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                          ▲                                  │
-│                          │ App SA Token                     │
-│                          │                                  │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │  Application Namespaces                             │    │
-│  │  ┌───────────────────────────────────────────────┐  │    │
-│  │  │  Service Accounts:                            │  │    │
-│  │  │  - static-app-sa (static-app-*)               │  │    │
-│  │  │  - dynamic-app-sa (dynamic-app)               │  │    │
-│  │  │  - csi-app-sa (csi-app)                       │  │    │
-│  │  └───────────────────────────────────────────────┘  │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+Watch resources → log in to Vault → read/issue secrets →
+write Kubernetes Secret (or CSI volume) → update status → cache (encrypted) → repeat
 ```
 
-### Authentication Flow
+## Kubernetes namespaces and service accounts
 
-1. **JWT Token Reviewer Setup**
-   - Service account `vault` created in `vault` namespace
-   - ClusterRoleBinding grants `system:auth-delegator` permissions
-   - Long-lived token stored in `vault-token-secret`
-   - Token configured in Vault Kubernetes auth mount
+| Namespace | Service account | Purpose |
+|---|---|---|
+| `vault` | `vault` | Vault server and Vault CSI provider; `vault` SA is the token reviewer for the `vso` mount |
+| `vault-secrets-operator` | `vault-secrets-operator-controller-manager` | VSO controller |
+| `static-app-1..3` | `static-app-sa` (same name in each) | Static secrets |
+| `dynamic-app` | `dynamic-app-sa` | Dynamic database credentials and TLS |
+| `csi-app` | `csi-app-sa` | CSI secrets |
+| `pki-app-1..3` | `pki-app-sa` (same name in each) | Shared PKI certificates |
+| `entity-app-1..3` | `entity-app-N-sa` (unique per namespace) | Entity metadata |
+| `vault-agent-app` | `vault-agent-sa` | Vault Agent sidecar (optional) |
 
-2. **Application Authentication**
-   - Application pod uses its service account token
-   - VaultAuth resource references the service account
-   - VSO controller authenticates using the app SA token
-   - Vault validates token using JWT token reviewer
+## Authentication
 
-3. **Token Validation Process**
-   ```
-   App Pod → App SA Token → VaultAuth → VSO Controller →
-   Vault K8s Auth → JWT Token Reviewer → Validation →
-   Vault Token → Secret Access
-   ```
+Two auth mounts, both named `k8s-auth-mount`, live in different Vault namespaces:
 
-### Role-Based Access Control
+```
+ vso namespace (VSO controller only)          tn001 namespace (all demo apps)
+ ┌────────────────────────────────────┐       ┌────────────────────────────────────┐
+ │ kubernetes auth                    │       │ jwt auth                           │
+ │ token_reviewer_jwt = vault SA token│       │ oidc_discovery_url = cluster issuer│
+ │ (vault-token-secret, long-lived,   │       │ bound_issuer = cluster issuer      │
+ │  system:auth-delegator)            │       │ validates tokens offline via JWKS  │
+ └─────────────────▲──────────────────┘       └─────────────────▲──────────────────┘
+                   │ controller SA token                        │ app SA tokens (aud: vault)
+      vault-secrets-operator-controller-manager   static-app-sa, dynamic-app-sa, csi-app-sa,
+                                                  pki-app-sa, entity-app-N-sa, vault-agent-sa
+```
 
-#### Vault Roles and Policies
+- **`vso` mount** (`task config:vso:encrypted-cache`): Kubernetes auth. Vault calls the TokenReview
+  API with the long-lived `vault` SA token from `vault-token-secret`
+  (ClusterRoleBinding `vault-reviewer-binding` → `system:auth-delegator`). Role
+  `auth-role-operator` grants policy `vso-transit` (encrypt/decrypt on
+  `vso-transit/*/vso-client-cache`), token period 1 hour.
+- **`tn001` mount** (`task config:static-secret`): JWT auth. Vault fetches the cluster's OIDC
+  discovery document and JWKS (`oidc-discovery-public` ClusterRoleBinding allows unauthenticated
+  discovery) and validates service account tokens itself. On minikube the cluster CA is passed via
+  `oidc_discovery_ca_pem`; on EKS/GKE the public issuer uses the system CA bundle.
 
-Every example gets a dedicated Vault role bound to its own service account and namespace, so a
-compromised workload can only reach its own secrets. The per-example role and policy definitions
-live in the example documents linked under
-[Secret Synchronization Patterns](#secret-synchronization-patterns).
+Login flow for a demo app: VSO requests a token for the app's service account (TokenRequest,
+audience `vault`) → logs in to `tn001/auth/k8s-auth-mount` with the app's role → Vault checks the
+signature, issuer and bound claims → issues a Vault token with the role's policies.
 
-**VSO Operator Role**
-- Role name: `auth-role-operator`
-- Policy: `vso-operator`
-- Bound service accounts: `vault-secrets-operator-controller-manager`
-- Bound namespaces: `vault-secrets-operator`
-- Token TTL: 1 hour
-- Permissions:
-  - Encrypt/Decrypt: `vso-transit/encrypt/vso-client-cache`
-  - Encrypt/Decrypt: `vso-transit/decrypt/vso-client-cache`
+### Roles and isolation
 
-## Secret Synchronization Patterns
+Each example has its own Vault role and policy in `tn001`, but isolation differs by design:
 
-Each example has its own document covering its architecture diagram, Vault configuration, and
-synchronization and data flows:
+- **Static, shared PKI, entity**: one role serves several namespaces through glob bound claims
+  (`static-app-*`, `pki-app-*`, `entity-app-*`).
+- **Shared PKI**: every namespace uses the same SA name, so all log in as one alias - deliberately
+  not a tenancy boundary.
+- **Entity metadata**: each namespace has a unique SA name, mapped to a pre-created entity whose
+  metadata attributes usage for chargeback; the templated policy also scopes reads to the entity's
+  `team`.
+- **Dynamic, CSI, Vault Agent**: one namespace and one service account each.
+
+Role and policy details are in each example's walkthrough.
+
+## Examples
 
 | Example | Delivery mechanism | Manifests | Document |
 |---|---|---|---|
 | Static secrets | `VaultStaticSecret` → Kubernetes `Secret` | `vault-ent/static-secrets/` | [static-secrets.md](static-secrets.md) |
 | Dynamic secrets | `VaultDynamicSecret` / `VaultPKISecret` → `Secret`, leased | `vault-ent/dynamic-secrets/` | [dynamic-secrets.md](dynamic-secrets.md) |
-| CSI secrets | CSI driver → pod tmpfs, no `Secret` | `vault-ent/csi-secrets/` | [csi-secrets.md](csi-secrets.md) |
+| CSI secrets | `CSISecrets` → pod CSI volume, no `Secret` | `vault-ent/csi-secrets/` | [csi-secrets.md](csi-secrets.md) |
 | Shared PKI | One shared `VaultAuth` → `kubernetes.io/tls` `Secret` per namespace | `vault-ent/pki-secrets/` | [pki-secrets.md](pki-secrets.md) |
 | Entity metadata | Pre-created entity + templated policy → `Secret` per namespace | `vault-ent/entity-secrets/` | [entity-secrets.md](entity-secrets.md) |
 | Vault Agent (optional) | Agent init container → rendered file, no `Secret` | `vault-ent/vault-agent-secrets/` | [vault-agent-secrets.md](vault-agent-secrets.md) |
 
-## Platform-Specific Architecture
+Cluster provisioning for EKS and GKE is covered in [cloud-deployment.md](cloud-deployment.md).
 
-### Minikube Architecture
+## Storage classes
 
-**Characteristics:**
-- Single-node cluster
-- Local storage provisioner
-- Standard storage class
-- Direct host networking
-- Suitable for development and testing
+`task install:vault` and `task deploy:dynamic-secret` detect the platform from the current kubectl
+context and pick a storage class:
 
-**Storage:**
-- Storage class: `standard`
-- Provisioner: `k8s.io/minikube-hostpath`
-- Volume type: Host path on minikube VM
-- Persistence: Survives pod restarts, not cluster deletion
+| Platform | Context contains | Vault data volume | PostgreSQL PVC |
+|---|---|---|---|
+| Minikube | `minikube` | cluster default (`standard`) | `standard` |
+| EKS | `eks` or `arn:aws` | `gp2` (`--set server.dataStorage.storageClass=gp2`) | `gp2` |
+| GKE | `gke` | cluster default (typically `standard-rwo`) | `standard-rwo` |
+| Other | - | cluster default | `standard` |
 
-**Networking:**
-- Service type: NodePort for external access
-- Ingress: Minikube ingress addon
-- DNS: CoreDNS
-
-### Amazon EKS Architecture
-
-**Characteristics:**
-- Managed control plane
-- Multi-AZ worker nodes
-- AWS-integrated storage and networking
-- Production-grade HA setup
-
-**Storage:**
-- Storage class: `gp2` (explicitly configured)
-- Provisioner: AWS EBS CSI driver
-- Volume type: EBS General Purpose SSD (gp2)
-- Persistence: Independent of pod/node lifecycle
-- Backup: EBS snapshots
-
-**Networking:**
-- VPC: Custom VPC with public/private subnets
-- CNI: AWS VPC CNI plugin
-- Service type: LoadBalancer (AWS NLB/ALB)
-- Ingress: AWS Load Balancer Controller
-- DNS: Route53 integration
-
-**IAM Integration:**
-- IRSA: IAM Roles for Service Accounts (optional)
-- Node IAM roles for EBS CSI driver
-- Cluster IAM role for EKS control plane
-
-**High Availability:**
-- Control plane: Multi-AZ (AWS managed)
-- Worker nodes: Distributed across AZs
-- Vault: StatefulSet with persistent volumes
-- VSO: Can be scaled to multiple replicas
-
-### Google GKE Architecture
-
-**Characteristics:**
-- Managed control plane
-- Regional or zonal clusters
-- GCP-integrated storage and networking
-- Production-grade HA setup
-
-**Storage:**
-- Storage class: `standard-rwo` (cluster default)
-- Provisioner: GCE Persistent Disk CSI driver
-- Volume type: Standard persistent disk
-- Persistence: Independent of pod/node lifecycle
-- Backup: Persistent disk snapshots
-
-**Networking:**
-- VPC: Custom VPC with subnet
-- CNI: GKE native CNI (VPC-native cluster)
-- Service type: LoadBalancer (GCP Load Balancer)
-- Ingress: GKE Ingress controller
-- DNS: Cloud DNS integration
-
-**IAM Integration:**
-- Workload Identity: GCP IAM for service accounts (optional)
-- Node service accounts for persistent disk access
-- Cluster service account for GKE control plane
-
-**High Availability:**
-- Control plane: Multi-zonal (GCP managed)
-- Worker nodes: Distributed across zones
-- Vault: StatefulSet with persistent volumes
-- VSO: Can be scaled to multiple replicas
-
-## Performance and Scalability
-
-### VSO Controller Performance
-
-**Resource Requirements:**
-- CPU: 100m (request), 500m (limit)
-- Memory: 128Mi (request), 512Mi (limit)
-- Scales horizontally with leader election
-
-**Throughput:**
-- Typical: 100-500 secret syncs/minute
-- With caching: 1000+ secret syncs/minute
-- Bottleneck: Vault API rate limits
-
-### Vault Performance
-
-**Resource Requirements:**
-- CPU: 500m (request), 2000m (limit)
-- Memory: 256Mi (request), 2Gi (limit)
-- Storage: 10Gi persistent volume
-
-**Throughput:**
-- Typical: 1000-5000 requests/second
-- With performance replication: 10000+ requests/second
-- Bottleneck: Storage I/O for audit logs
-
-### Caching Strategy
-
-**VSO Client Cache:**
-- Encrypted using Vault Transit engine
-- Reduces Vault API calls by 70-90%
-- TTL: Configurable (default: 5 minutes)
-- Invalidation: Automatic on secret updates
-
-**Vault Token Cache:**
-- In-memory token caching
-- Reduces authentication overhead
-- Automatic renewal before expiration
+`vault-ent/vault-values.yaml` sets no storage class; it is passed at Helm install time. PostgreSQL
+uses `vault-ent/dynamic-secrets/postgres-deployment.yaml.tpl` with `${STORAGE_CLASS}` substituted.
 
 ## References
 
-- [Vault Architecture](https://developer.hashicorp.com/vault/docs/internals/architecture)
-- [VSO Architecture](https://developer.hashicorp.com/vault/docs/platform/k8s/vso/architecture)
-- [Kubernetes Auth Method](https://developer.hashicorp.com/vault/docs/auth/kubernetes)
-- [CSI Driver Architecture](https://kubernetes-csi.github.io/docs/)
+- [Vault Secrets Operator](https://developer.hashicorp.com/vault/docs/platform/k8s/vso)
+- [Vault JWT/OIDC auth](https://developer.hashicorp.com/vault/docs/auth/jwt)
+- [Vault Kubernetes auth](https://developer.hashicorp.com/vault/docs/auth/kubernetes)
+- [Vault Enterprise namespaces](https://developer.hashicorp.com/vault/docs/enterprise/namespaces)

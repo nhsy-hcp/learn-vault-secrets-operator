@@ -153,4 +153,4 @@ it lapses.
 
 - [Architecture overview](architecture.md)
 - [Shared PKI example](pki-secrets.md) - a second role on the same `pki` mount
-- [Testing and validation](testing-validation.md)
+- [Troubleshooting](troubleshooting.md)

@@ -1,11 +1,12 @@
 # CSI Secrets Example
 
-Mounts secrets straight into the pod filesystem through the Secrets Store CSI driver. No Kubernetes
-`Secret` object is ever created - the data exists only in the pod's tmpfs.
+Mounts secrets straight into the pod filesystem through the **VSO CSI driver**
+(`csi.vso.hashicorp.com`), configured by a `CSISecrets` resource. No Kubernetes `Secret` object is
+ever created: the data exists only in the pod's tmpfs volume.
 
 - Manifests: [`vault-ent/csi-secrets/`](../vault-ent/csi-secrets/)
 - Tasks: `task config:csi-secret`, `task deploy:csi-secret`, `task verify:csi-secret`, `task rotate:csi:secret`, `task restart:csi-secret`
-- Requires VSO installed with `csi.enabled=true`
+- Requires VSO installed with `csi.enabled: true` (set in `vault-ent/vault-operator-values.yaml`)
 
 ## Architecture
 
@@ -16,135 +17,62 @@ flowchart LR
     ROLE["auth/k8s-auth-mount<br/>role: csi-secret"]
   end
 
-  subgraph node["Kubernetes node"]
-    KUBELET["kubelet"]
-    CSI["Secrets Store CSI driver"]
-    PROV["Vault CSI provider"]
+  subgraph vso["vault-secrets-operator"]
+    DRV["VSO CSI driver<br/>csi.vso.hashicorp.com"]
   end
 
   subgraph app["csi-app"]
-    SPC["SecretProviderClass"]
+    VA["VaultAuth csi-auth"]
+    CS["CSISecrets csi-demo"]
+    SA["ServiceAccount csi-app-sa"]
     POD["Pod csi-app"]
     TMPFS["tmpfs volume<br/>/secrets/static"]
   end
 
-  POD -->|CSI volume| KUBELET
-  KUBELET --> CSI
-  CSI -->|reads| SPC
-  CSI --> PROV
-  PROV -->|JWT login| ROLE
+  POD -->|CSI volume| DRV
+  DRV -->|reads| CS
+  CS --> VA
+  VA -.uses.-> SA
+  DRV -->|JWT login| ROLE
   ROLE --> KV
-  PROV --> TMPFS
+  DRV --> TMPFS
   TMPFS -.mounted into.-> POD
 ```
 
-Because nothing is persisted as a `Secret`, the data disappears when the pod does - at the cost of
-being unavailable to anything that cannot mount the volume.
+Nothing is persisted as a `Secret`, so the data disappears with the pod. The trade-off is that
+anything that can't mount the volume can't read the data.
+
+## CSISecrets resource
+
+`csi-demo` does three jobs:
+- **Declares the secret:** `kvv2/db-creds`, authenticated through `VaultAuth/csi-auth`.
+- **Restricts which pods may mount it:** `accessControl` checks the service account (`csi-app-sa`),
+  the namespace (`csi-app`) and the pod name (`^csi-app-*`).
+- **Renders the files:** every raw key is excluded, and templates produce `dbUsername` and
+  `dbPassword`.
 
 ## Vault configuration
 
 **CSI Secrets Role**
-- Role name: `csi-secret`
+- Role name: `csi-secret` (JWT, `user_claim` = service account name)
 - Policy: `csi-secret`
-- Bound service accounts: `csi-app-sa`
-- Bound namespaces: `csi-app`
-- Token TTL: 1 hour
-- Permissions:
-  - Read: `kvv2/data/db-creds`
-  - List: `kvv2/metadata/db-creds`
+- Bound service account / namespace: `csi-app-sa` / `csi-app`
+- Audience: `vault`; token period: 1 hour
+- Permissions: read `kvv2/data/db-creds`
 
 ## Synchronisation flow
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. User creates SecretProviderClass                        │
-│     - Defines Vault path and parameters                     │
-│     - Specifies authentication details                      │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. User creates Pod with CSI volume                        │
-│     - References SecretProviderClass                        │
-│     - Defines mount path                                    │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. Kubelet schedules pod                                   │
-│     - Detects CSI volume requirement                        │
-│     - Calls CSI node driver                                 │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. CSI node driver intercepts mount                        │
-│     - Reads SecretProviderClass                             │
-│     - Initiates Vault authentication                        │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. Vault CSI Provider authenticates                        │
-│     - Uses pod's service account token                      │
-│     - Authenticates via k8s-auth-mount                      │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  6. Vault CSI Provider fetches secrets                      │
-│     - Reads from kvv2/data/db-creds                         │
-│     - Formats secrets per SecretProviderClass               │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  7. CSI driver mounts secrets to pod                        │
-│     - Writes secrets to tmpfs volume                        │
-│     - Mounts at specified path (/secrets/static)            │
-│     - No Kubernetes Secret resource created                 │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  8. Application reads secrets from filesystem               │
-│     - Secrets available at mount path                       │
-│     - Secrets exist only in pod memory                      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Data flow
-
-```
-┌──────────────┐
-│   Vault KV   │
-│   Storage    │
-└──────┬───────┘
-       │
-       │ 1. CSI Provider reads secret
-       ▼
-┌──────────────┐
-│  Vault CSI   │
-│   Provider   │
-└──────┬───────┘
-       │
-       │ 2. Writes to tmpfs
-       ▼
-┌──────────────┐
-│   tmpfs      │
-│   Volume     │
-└──────┬───────┘
-       │
-       │ 3. Mounted to pod
-       ▼
-┌──────────────┐
-│ Application  │
-│     Pod      │
-└──────────────┘
-```
+1. `task deploy:csi-secret` applies the `ServiceAccount`, `VaultAuth`, `CSISecrets` and the
+   deployment.
+2. The kubelet mounts the pod's CSI volume. Its `volumeAttributes` name `csi-demo` in `csi-app`.
+3. The VSO CSI driver checks the pod against `accessControl`, then logs in to Vault as
+   `csi-app-sa` via `k8s-auth-mount`.
+4. The driver reads `kvv2/db-creds`, renders the templates and writes `dbUsername` and
+   `dbPassword` to a tmpfs volume mounted at `/secrets/static`.
+5. After `task rotate:csi:secret`, run `task restart:csi-secret` so new pods mount the new values.
 
 ## Related
 
 - [Architecture overview](architecture.md)
-- [Static secrets example](static-secrets.md) - the same KV mount, delivered as a `Secret`
-- [Testing and validation](testing-validation.md)
+- [Static secrets example](static-secrets.md): the same KV mount, delivered as a `Secret`
+- [Troubleshooting](troubleshooting.md)

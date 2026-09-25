@@ -116,3 +116,4 @@ and the init container logs to show `authentication successful` followed by
 - [Architecture overview](architecture.md)
 - [Static secrets example](static-secrets.md) - the same KV secret delivered as a `Secret`
 - [CSI secrets example](csi-secrets.md) - another no-`Secret` delivery mechanism
+- [Troubleshooting](troubleshooting.md)
