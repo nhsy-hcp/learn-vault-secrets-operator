@@ -115,6 +115,7 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 - `dynamic-app`: Dynamic secret demonstrations
 - `csi-app`: CSI driver integration demonstration
 - `pki-app-1`, `pki-app-2`, `pki-app-3`: Shared PKI certificate demonstrations
+- `entity-app-1`, `entity-app-2`, `entity-app-3`: Entity metadata demonstrations
 - `vault-agent-app`: Vault Agent sidecar demonstration (optional)
 
 #### Service Accounts
@@ -133,6 +134,8 @@ Sync to K8s Secrets → Update Status → Cache Results → Repeat
 - `csi-app-sa`: CSI driver application (namespace: `csi-app`)
 - `pki-app-sa`: Shared PKI applications (namespaces: `pki-app-*`) - one ServiceAccount object per
   namespace, all sharing the same name
+- `entity-app-N-sa`: Entity metadata applications (namespaces: `entity-app-*`) - a unique name per
+  namespace, so each logs in as its own alias bound to a pre-created entity
 - `vault-agent-sa`: Vault Agent sidecar application (namespace: `vault-agent-app`)
 
 ## Authentication Architecture
@@ -228,6 +231,7 @@ synchronization and data flows:
 | Dynamic secrets | `VaultDynamicSecret` / `VaultPKISecret` → `Secret`, leased | `vault-ent/dynamic-secrets/` | [dynamic-secrets.md](dynamic-secrets.md) |
 | CSI secrets | CSI driver → pod tmpfs, no `Secret` | `vault-ent/csi-secrets/` | [csi-secrets.md](csi-secrets.md) |
 | Shared PKI | One shared `VaultAuth` → `kubernetes.io/tls` `Secret` per namespace | `vault-ent/pki-secrets/` | [pki-secrets.md](pki-secrets.md) |
+| Entity metadata | Pre-created entity + templated policy → `Secret` per namespace | `vault-ent/entity-secrets/` | [entity-secrets.md](entity-secrets.md) |
 | Vault Agent (optional) | Agent init container → rendered file, no `Secret` | `vault-ent/vault-agent-secrets/` | [vault-agent-secrets.md](vault-agent-secrets.md) |
 
 ## Platform-Specific Architecture

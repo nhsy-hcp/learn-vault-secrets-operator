@@ -9,6 +9,7 @@ vars:
   vso_version_tag: "1.5.1"
   static_app_count: 3
   pki_app_count: 3
+  entity_apps_file: vault-ent/entity-secrets/apps.json
 
 dotenv:
   - .env
@@ -60,6 +61,9 @@ tasks:
       - task: config:pki-secret
       - task: deploy:pki-secret
       - task: verify:pki-secret
+      - task: config:entity-secret
+      - task: deploy:entity-secret
+      - task: verify:entity-secret
 
   verify:
     cmds:
@@ -68,6 +72,7 @@ tasks:
       - task: verify:dynamic-secret
       - task: verify:csi-secret
       - task: verify:pki-secret
+      - task: verify:entity-secret
 
   # ============================================================================
   # Prerequisites & Setup
@@ -379,6 +384,29 @@ tasks:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
 
+  config:entity-secret:
+    preconditions:
+      - test -f vault-init.json
+    desc: Configure Vault pre-created identity entities with team metadata in tn001 namespace
+    cmds:
+      - |
+        for app in $(jq -r '.[].name' {{ .entity_apps_file }}); do
+          kubectl create ns "${app}" || true
+        done
+      # One secret per team; requires the kvv2 mount from config:static-secret
+      - |
+        for team in $(jq -r '[.[].team] | unique | .[]' {{ .entity_apps_file }}); do
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/teams/${team}/config team=\"${team}\" username=\"${team}-user\" password=\"${team}-password\""
+        done
+      - kubectl cp vault-ent/entity-secrets/entity-secret.hcl vault-0:/tmp/entity-secret.hcl -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write entity-secret /tmp/entity-secret.hcl"
+      - kubectl cp vault-ent/entity-secrets/entity-secret-role.json vault-0:/tmp/entity-secret-role.json -n vault
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/entity-secret @/tmp/entity-secret-role.json"
+      - ./scripts/config-entity-secret.sh {{ .entity_apps_file }}
+    env:
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+
   config:vault-agent-secret:
     preconditions:
       - test -f vault-init.json
@@ -539,6 +567,26 @@ tasks:
           kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=pki-app --timeout=2m -n "${APP_NAME}"
         done
 
+  deploy:entity-secret:
+    desc: Deploy entity metadata secret resources for all app instances
+    cmds:
+      - |
+        for APP_NAME in $(jq -r '.[].name' {{ .entity_apps_file }}); do
+          TEAM=$(jq -r --arg n "${APP_NAME}" '.[] | select(.name == $n) | .team' {{ .entity_apps_file }})
+          echo "Deploying ${APP_NAME} (team ${TEAM})..."
+          for tpl in service-account vault-auth static-secret; do
+            sed -e "s/\${APP_NAME}/${APP_NAME}/g" -e "s/\${TEAM}/${TEAM}/g" "vault-ent/entity-secrets/templates/${tpl}.yaml.tpl" | kubectl apply -f -
+          done
+          sleep 5
+          sed "s/\${APP_NAME}/${APP_NAME}/g" vault-ent/entity-secrets/templates/deployment.yaml.tpl | kubectl apply -f -
+        done
+      - sleep 5
+      - |
+        for APP_NAME in $(jq -r '.[].name' {{ .entity_apps_file }}); do
+          echo "Waiting for ${APP_NAME} pods to be ready..."
+          kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=entity-app --timeout=2m -n "${APP_NAME}"
+        done
+
   deploy:vault-agent-secret:
     desc: Deploy the Vault Agent sidecar demo application (optional)
     cmds:
@@ -652,6 +700,27 @@ tasks:
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/k8s-auth-mount/role/pki-secret"
       - echo "\n=== The single shared PKI issuing role (allowed_domains defines what may be minted) ==="
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read pki/roles/pki-app"
+    env:
+      VAULT_TOKEN:
+        sh: cat vault-init.json | jq -r '.root_token'
+    silent: true
+
+  verify:entity-secret:
+    desc: Verify entity metadata and per-team secret sync for all app instances
+    cmds:
+      - |
+        for APP_NAME in $(jq -r '.[].name' {{ .entity_apps_file }}); do
+          echo "=== Verifying ${APP_NAME} ==="
+          echo "=== Entity metadata and aliases ==="
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read -format=json identity/entity/name/${APP_NAME}" \
+            | jq '.data | {name, metadata, aliases: [.aliases[] | {name, metadata}]}'
+          echo "=== VaultStaticSecret status ==="
+          kubectl get vaultstaticsecret -n "${APP_NAME}" vault-kv-app
+          echo "=== Decoding secret values ==="
+          echo "Team: $(kubectl get secrets -n ${APP_NAME} secretkv -o jsonpath='{.data.team}' | base64 -d)"
+          echo "Username: $(kubectl get secrets -n ${APP_NAME} secretkv -o jsonpath='{.data.username}' | base64 -d)"
+          echo ""
+        done
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -913,6 +982,14 @@ tasks:
           kubectl delete vaultpkisecret --all -n "${APP_NAME}" --ignore-not-found || true
         done
       - kubectl delete vaultauth pki-auth -n vault-secrets-operator --ignore-not-found || true
+      - |
+        for APP_NAME in $(jq -r '.[].name' {{ .entity_apps_file }}); do
+          echo "Cleaning up ${APP_NAME}..."
+          kubectl delete deployment --all -n "${APP_NAME}" --ignore-not-found
+          kubectl delete pods --all -n "${APP_NAME}" --force --ignore-not-found
+          kubectl delete vaultstaticsecret --all -n "${APP_NAME}" --ignore-not-found || true
+          kubectl delete vaultauth --all -n "${APP_NAME}" --ignore-not-found || true
+        done
       - kubectl delete deployment --all -n vault-agent-app --ignore-not-found
       - kubectl delete pods --all -n vault-agent-app --force --ignore-not-found
       - sleep 5
@@ -924,6 +1001,12 @@ tasks:
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
           kubectl delete ns "pki-app-${i}" --ignore-not-found
+        done
+      - |
+        for APP_NAME in $(jq -r '.[].name' {{ .entity_apps_file }}); do
+          kubectl delete ns "${APP_NAME}" --ignore-not-found
+          # Pre-created entities are not removed when the auth mount is disabled
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault delete identity/entity/name/${APP_NAME}" || true
         done
       - kubectl delete ns dynamic-app --ignore-not-found
       - kubectl delete ns csi-app --ignore-not-found

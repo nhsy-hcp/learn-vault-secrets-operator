@@ -50,6 +50,7 @@ One document per example in `vault-ent/`, each with an architecture diagram, its
 - **[Dynamic Secrets](docs/dynamic-secrets.md)** - Leased PostgreSQL credentials and PKI certificates generated on demand
 - **[CSI Secrets](docs/csi-secrets.md)** - Secrets mounted straight into the pod filesystem, with no Kubernetes `Secret` created
 - **[Shared PKI Secrets](docs/pki-secrets.md)** - One shared `VaultAuth` and service account issuing a certificate per namespace
+- **[Entity Metadata Secrets](docs/entity-secrets.md)** - Pre-created Vault identity entities carry team/business-unit metadata that a templated policy uses to scope each app to its team's secrets
 - **[Vault Agent Sidecar](docs/vault-agent-secrets.md)** *(optional)* - Secret delivered as a rendered file by an Agent init container, without VSO
 
 ### Technical Documentation
@@ -132,7 +133,9 @@ task verify
 │   ├── dynamic-secrets/           # Dynamic secret manifests
 │   ├── csi-secrets/               # CSI driver configurations
 │   ├── pki-secrets/               # Shared PKI certificate manifests
+│   ├── entity-secrets/            # Entity metadata manifests and apps.json catalogue
 │   └── vault-agent-secrets/       # Vault Agent sidecar demo (optional)
+├── scripts/                       # Helper scripts invoked from Taskfile.yml
 ├── eks/                           # EKS infrastructure (Terraform)
 └── gke/                           # GKE infrastructure (Terraform)
 ```
@@ -158,6 +161,8 @@ Each application type has a dedicated Vault role with specific policies and serv
 - **Shared PKI**: Role `pki-secret` with policy `pki-secret`, service account `pki-app-sa`
   - Uses glob pattern matching for namespaces (`pki-app-*`) to support multiple app instances
   - Unlike the other demos, all instances share a **single** `VaultAuth` (`pki-auth`) in the operator namespace
+- **Entity Metadata**: Role `entity-secret` with policy `entity-secret`, service account `entity-app-N-sa`
+  - A unique service account name per namespace gives each app its own entity alias, bound to a pre-created entity holding `application_name`, `team` and `business_unit` metadata
 
 #### Authentication Flow
 1. **JWT Token Reviewer**: A centralized service account with `system:auth-delegator` permissions provides a long-lived JWT token

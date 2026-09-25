@@ -1,0 +1,5 @@
+[
+  {"name": "entity-app-1", "application_name": "payments-api", "team": "payments", "business_unit": "retail"},
+  {"name": "entity-app-2", "application_name": "payments-portal", "team": "payments", "business_unit": "retail"},
+  {"name": "entity-app-3", "application_name": "risk-engine", "team": "risk", "business_unit": "corporate"}
+]
