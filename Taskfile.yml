@@ -6,6 +6,7 @@ vars:
   pki_max_ttl: "4h"
   postgresql_max_ttl: "24h"
   vault_version_tag: "2.1.0-ent"
+  vault_chart_version: "0.34.1"
   vso_version_tag: "1.6.0"
   static_app_count: 3
   pki_app_count: 3
@@ -159,6 +160,7 @@ tasks:
         fi
 
         helm upgrade --install vault hashicorp/vault \
+          --version {{ .vault_chart_version }} \
           -n vault \
           --values vault-ent/vault-values.yaml \
           --set server.image.tag="{{ .vault_version_tag }}" \
