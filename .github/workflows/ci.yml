@@ -84,7 +84,7 @@ jobs:
     needs: lint
     if: ${{ needs.lint.outputs.act != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -101,7 +101,15 @@ jobs:
           helm repo add hashicorp https://helm.releases.hashicorp.com
           helm repo update
 
-      - uses: medyagh/setup-minikube@v0.0.21
+      - name: Install k3d
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.9.0 bash
+          k3d version
+
+      - name: Create k3d cluster
+        run: task cluster:up
 
       - name: Install Vault and VSO
         run: task install

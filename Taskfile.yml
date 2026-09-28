@@ -10,6 +10,7 @@ vars:
   static_app_count: 3
   pki_app_count: 3
   entity_apps_file: vault-ent/entity-secrets/apps.json
+  cluster_name: vso-lab
 
 dotenv:
   - .env
@@ -35,7 +36,7 @@ tasks:
     desc: Run the complete Vault Secrets Operator tutorial
     cmds:
       - task: prerequisites
-      - task: minikube
+      - task: cluster:up
       - task: install
       - task: secrets
 
@@ -92,31 +93,38 @@ tasks:
           exit 1
         fi
       - |
-        if ! command -v minikube &> /dev/null; then
-          echo "minikube could not be found"
+        if ! command -v k3d &> /dev/null; then
+          echo "k3d could not be found"
+          exit 1
+        fi
+      - |
+        if ! command -v docker &> /dev/null && ! command -v podman &> /dev/null; then
+          echo "docker or podman could not be found"
+          exit 1
         fi
       - echo "All prerequisites found"
       - helm repo add hashicorp https://helm.releases.hashicorp.com
       - helm repo update
     silent: true
 
-  minikube:
-    aliases: ["minikube-start", "start"]
-    desc: Start minikube cluster
+  cluster:up:
+    aliases: ["start", "k3d"]
+    desc: Create/start k3d cluster with Vault on localhost:8200 (idempotent)
     cmds:
-      - |
-        if minikube status &> /dev/null; then
-          echo "minikube is already running"
-        else
-          minikube start
-        fi
+      - scripts/cluster-up.sh {{.cluster_name}}
+      - scripts/cluster-ready.sh {{.cluster_name}}
     silent: true
 
-  minikube:stop:
+  cluster:stop:
     aliases: ["stop"]
-    desc: Stop podman machine
+    desc: Stop the k3d cluster
     cmds:
-      - minikube stop
+      - k3d cluster stop {{.cluster_name}}
+
+  cluster:down:
+    desc: Delete the k3d cluster
+    cmds:
+      - k3d cluster delete {{.cluster_name}} || true
 
   # ============================================================================
   # Vault Installation
@@ -132,29 +140,29 @@ tasks:
       - helm repo add hashicorp https://helm.releases.hashicorp.com
       - helm repo update
       - |
-        # Detect platform and set storage class accordingly
+        # Detect platform and set storage class / service type accordingly
         CONTEXT=$(kubectl config current-context)
-        STORAGE_CLASS_FLAG=""
+        HELM_PLATFORM_FLAGS=""
 
-        if echo "$CONTEXT" | grep -q "minikube"; then
-          echo "Detected minikube cluster - using default storage class (standard)"
-          STORAGE_CLASS_FLAG=""
+        if echo "$CONTEXT" | grep -q "^k3d-"; then
+          echo "Detected k3d cluster - using default storage class (local-path), NodePort 30820 for localhost:8200"
+          HELM_PLATFORM_FLAGS="--set server.service.type=NodePort --set server.service.nodePort=30820"
         elif echo "$CONTEXT" | grep -Eq "eks|arn:aws"; then
           echo "Detected EKS cluster - using gp2 storage class"
-          STORAGE_CLASS_FLAG="--set server.dataStorage.storageClass=gp2 --set server.dataStorage.enabled=true"
+          HELM_PLATFORM_FLAGS="--set server.dataStorage.storageClass=gp2 --set server.dataStorage.enabled=true"
         elif echo "$CONTEXT" | grep -q "gke"; then
           echo "Detected GKE cluster - using cluster default storage class"
-          STORAGE_CLASS_FLAG=""
+          HELM_PLATFORM_FLAGS=""
         else
           echo "Unknown cluster type - using cluster default storage class"
-          STORAGE_CLASS_FLAG=""
+          HELM_PLATFORM_FLAGS=""
         fi
 
         helm upgrade --install vault hashicorp/vault \
           -n vault \
           --values vault-ent/vault-values.yaml \
           --set server.image.tag="{{ .vault_version_tag }}" \
-          $STORAGE_CLASS_FLAG
+          $HELM_PLATFORM_FLAGS
       - sleep 10
       - kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app.kubernetes.io/name=vault -n vault --timeout=5m
     silent: true
@@ -265,14 +273,14 @@ tasks:
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth enable -path k8s-auth-mount jwt" || true
       - |
         export ISSUER=$(kubectl get --raw /.well-known/openid-configuration | jq -r '.issuer')
-        if kubectl config current-context | grep -q minikube; then
-          echo "Detected minikube cluster - using kubernetes service account CA"
+        if kubectl config current-context | grep -q '^k3d-'; then
+          echo "Detected k3d cluster - using kubernetes service account CA"
           kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
             oidc_discovery_url=\"$ISSUER\" \
             oidc_discovery_ca_pem=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
             bound_issuer=\"$ISSUER\""
         else
-          echo "Detected non-minikube cluster (EKS/GKE/etc) - using system CA bundle for public OIDC endpoint"
+          echo "Detected non-k3d cluster (EKS/GKE/etc) - using system CA bundle for public OIDC endpoint"
           kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
             oidc_discovery_url=\"$ISSUER\" \
             bound_issuer=\"$ISSUER\""
@@ -423,7 +431,8 @@ tasks:
           --create-namespace \
           --values vault-ent/vault-operator-values.yaml \
           --version {{ .vso_version_tag }}
-      - kubectl wait --for=condition=ready pod --all -n vault-secrets-operator --timeout=5m
+      - kubectl rollout status deployment/vault-secrets-operator-controller-manager -n vault-secrets-operator --timeout=5m
+      - kubectl rollout status daemonset/vault-secrets-operator-csi-node -n vault-secrets-operator --timeout=5m
     silent: true
 
   # ============================================================================
@@ -461,9 +470,9 @@ tasks:
         CONTEXT=$(kubectl config current-context)
         STORAGE_CLASS=""
 
-        if echo "$CONTEXT" | grep -q "minikube"; then
-          echo "Detected minikube cluster - using standard storage class for PostgreSQL"
-          STORAGE_CLASS="standard"
+        if echo "$CONTEXT" | grep -q "^k3d-"; then
+          echo "Detected k3d cluster - using local-path storage class for PostgreSQL"
+          STORAGE_CLASS="local-path"
         elif echo "$CONTEXT" | grep -Eq "eks|arn:aws"; then
           echo "Detected EKS cluster - using gp2 storage class for PostgreSQL"
           STORAGE_CLASS="gp2"
@@ -846,7 +855,7 @@ tasks:
       - kubectl logs -n vault-secrets-operator -l app.kubernetes.io/name=vault-secrets-operator -f
 
   port-forward:
-    desc: Port forward Vault to localhost:8200
+    desc: Port forward Vault to localhost:8200 (EKS/GKE; k3d already maps localhost:8200)
     cmds:
       - kubectl port-forward -n vault vault-0 8200:8200
 
@@ -898,7 +907,7 @@ tasks:
     silent: true
 
   events:
-    desc: minikube events
+    desc: Display Kubernetes events
     cmds:
       - kubectl get events
 
@@ -1014,10 +1023,10 @@ tasks:
   # ============================================================================
 
   clean:
-    desc: Remove the minikube cluster
+    desc: Delete the k3d cluster and vault-init.json
     cmds:
-      - minikube delete
-      - rm vault-init.json || true
+      - task: cluster:down
+      - rm -f vault-init.json
 
   clean:namespaces:
     desc: Delete vault and vault-secrets-operator namespaces

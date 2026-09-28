@@ -12,7 +12,8 @@ server:
     # storageClass is set dynamically based on platform during helm install
     # dataStorage:
     #  enabled: true
-    # EKS: gp2, GKE: cluster default, Minikube: standard
+    # EKS: gp2, GKE: cluster default, k3d: local-path (default)
+    # On k3d, install:vault also sets the service to NodePort 30820 (mapped to localhost:8200)
 
 injector:
   enabled: "false"

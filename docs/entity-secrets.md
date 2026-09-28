@@ -74,7 +74,7 @@ A natural first idea is to label each `ServiceAccount` with `team` and `business
 into the entity alias with the JWT role's `claim_mappings`. That does not work: the Kubernetes
 TokenRequest API issues a fixed set of claims (`iss`, `sub`, `aud`, `exp`/`iat`/`nbf` and
 `kubernetes.io.{namespace, serviceaccount.{name,uid}}`, plus pod/node when bound). Labels and
-annotations are never included, and this cannot be configured on EKS, GKE or minikube.
+annotations are never included, and this cannot be configured on EKS, GKE or k3d.
 
 So the example splits the metadata in two:
 

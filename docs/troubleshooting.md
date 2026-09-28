@@ -23,6 +23,8 @@ Repo-specific symptoms for each example. Start with the automated checks: `task 
   [storage classes](architecture.md#storage-classes).
 - **License errors:** `vault-ent/vault-license.lic` must exist before `task install:vault` creates the
   `vault-license` secret.
+- **k3d cluster creation fails with log-read errors (podman):** restart the podman machine with
+  `podman machine stop && podman machine start`.
 
 ## Static secrets
 

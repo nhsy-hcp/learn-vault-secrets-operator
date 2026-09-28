@@ -101,8 +101,10 @@ Two auth mounts, both named `k8s-auth-mount`, live in different Vault namespaces
   `vso-transit/*/vso-client-cache`), token period 1 hour.
 - **`tn001` mount** (`task config:static-secret`): JWT auth. Vault fetches the cluster's OIDC
   discovery document and JWKS (`oidc-discovery-public` ClusterRoleBinding allows unauthenticated
-  discovery) and validates service account tokens itself. On minikube the cluster CA is passed via
-  `oidc_discovery_ca_pem`; on EKS/GKE the public issuer uses the system CA bundle.
+  discovery) and validates service account tokens itself. On k3d the issuer is in-cluster
+  (`https://kubernetes.default.svc.cluster.local`), so the service-account CA is passed via
+  `oidc_discovery_ca_pem`, and the cluster is created with `anonymous-auth=true` (k3s disables it
+  by default); on EKS/GKE the public issuer uses the system CA bundle.
 
 Login flow for a demo app: VSO requests a token for the app's service account (TokenRequest,
 audience `vault`) → logs in to `tn001/auth/k8s-auth-mount` with the app's role → Vault checks the
@@ -143,7 +145,7 @@ context and pick a storage class:
 
 | Platform | Context contains | Vault data volume | PostgreSQL PVC |
 |---|---|---|---|
-| Minikube | `minikube` | cluster default (`standard`) | `standard` |
+| k3d | `k3d` | cluster default (`local-path`) | `local-path` |
 | EKS | `eks` or `arn:aws` | `gp2` (`--set server.dataStorage.storageClass=gp2`) | `gp2` |
 | GKE | `gke` | cluster default (typically `standard-rwo`) | `standard-rwo` |
 | Other | - | cluster default | `standard` |

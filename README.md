@@ -1,7 +1,7 @@
 # Vault Secrets Operator for Kubernetes
 
 This repository demonstrates HashiCorp Vault Secrets Operator (VSO) on Kubernetes, with one worked
-example per secret-delivery pattern and `task` automation for Minikube, Amazon EKS and Google GKE.
+example per secret-delivery pattern and `task` automation for k3d (local), Amazon EKS and Google GKE.
 
 ![k9s](docs/images/k9s.png)
 
@@ -54,29 +54,29 @@ vault-ent/
 - helm
 - jq
 - task ([taskfile.dev](https://taskfile.dev))
-- minikube (local), or Terraform CLI plus AWS CLI (EKS) / Google Cloud CLI (GKE)
+- k3d plus docker or podman (local), or Terraform CLI plus AWS CLI (EKS) / Google Cloud CLI (GKE)
 
 `task prerequisites` checks the core tools.
 
 ## Quick Start
 
-### Minikube
+### k3d (local)
 
 ```bash
-# Complete setup: prerequisites, minikube, Vault + VSO, all examples
+# Complete setup: prerequisites, k3d cluster, Vault + VSO, all examples
 task all
 
 # Or step-by-step
-task minikube   # start minikube (skipped if already running)
+task cluster:up # create or start the k3d cluster `vso-lab` (idempotent)
 task install    # install, initialise, unseal and configure Vault, then install VSO
 task secrets    # configure, deploy and verify every example
 task verify     # re-run all verifications
 ```
 
-Minikube uses its default `standard` storage class. If pods stay `Pending`, give minikube more
-resources, e.g. `minikube start --cpus=4 --memory=8192`.
+The cluster (context `k3d-vso-lab`) uses the `local-path` storage class. Vault is exposed on NodePort
+30820, mapped to http://localhost:8200, so no port-forward is needed. `task cluster:stop` stops it.
 
-Tear down with `task uninstall` (Vault, VSO and all apps) or `task clean` (delete the minikube cluster
+Tear down with `task uninstall` (Vault, VSO and all apps) or `task clean` (delete the k3d cluster
 and `vault-init.json`).
 
 ### EKS or GKE

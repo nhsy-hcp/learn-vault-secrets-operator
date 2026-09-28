@@ -1,7 +1,7 @@
 # Cloud Deployment (EKS and GKE)
 
 Provision a managed Kubernetes cluster with Terraform, then install Vault, VSO and the examples with the
-same tasks used on Minikube. Infrastructure inputs, defaults and outputs are documented in
+same tasks used on k3d. Infrastructure inputs, defaults and outputs are documented in
 [`eks/README.md`](../eks/README.md) and [`gke/README.md`](../gke/README.md).
 
 | | EKS | GKE |
