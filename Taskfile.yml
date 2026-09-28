@@ -6,7 +6,7 @@ vars:
   pki_max_ttl: "4h"
   postgresql_max_ttl: "24h"
   vault_version_tag: "2.1.0-ent"
-  vso_version_tag: "1.5.1"
+  vso_version_tag: "1.6.0"
   static_app_count: 3
   pki_app_count: 3
   entity_apps_file: vault-ent/entity-secrets/apps.json
