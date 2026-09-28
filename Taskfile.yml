@@ -133,7 +133,7 @@ tasks:
   install:vault:
     desc: Install Vault using Helm
     preconditions:
-      - test -f vault-ent/vault-license.lic
+      - test -s vault-ent/vault-license.lic
     cmds:
       - kubectl create namespace vault || true
       - kubectl create secret generic vault-license -n vault --from-file=license=vault-ent/vault-license.lic || true

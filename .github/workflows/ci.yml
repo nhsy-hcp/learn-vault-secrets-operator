@@ -92,9 +92,15 @@ jobs:
 
       - name: Write Vault Enterprise license
         shell: bash
+        env:
+          VAULT_LICENSE: ${{ secrets.VAULT_LICENSE }}
         run: |
           set -euo pipefail
-          echo "${{ secrets.VAULT_LICENSE }}" > vault-ent/vault-license.lic
+          if [ -z "$VAULT_LICENSE" ]; then
+            echo "::error::VAULT_LICENSE secret is empty or not available to this job"
+            exit 1
+          fi
+          printf '%s\n' "$VAULT_LICENSE" > vault-ent/vault-license.lic
 
       - name: Add Helm repos
         run: |
