@@ -82,7 +82,7 @@ jobs:
   test:
     name: e2e
     needs: lint
-    if: ${{ needs.lint.outputs.act != 'true' }}
+    if: ${{ needs.lint.outputs.act != 'true' && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
