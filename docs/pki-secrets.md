@@ -1,9 +1,11 @@
-# Shared PKI Secrets Example
+# PKI Secrets Example
 
-Issues a TLS certificate per namespace from a **single** shared service account identity - one
-`VaultAuth`, one Vault auth role and one PKI issuing role serving every `pki-app-*` namespace.
+Issues a TLS certificate per namespace. Each app has its own service account, and its annotations become
+Vault entity alias metadata; a templated policy uses that metadata to limit each app to its own PKI role.
+No entities are pre-created, unlike the [entity metadata example](entity-secrets.md).
 
 - Manifests: [`vault-ent/pki-secrets/`](../vault-ent/pki-secrets/)
+- Script: [`scripts/config-pki-secret.sh`](../scripts/config-pki-secret.sh)
 - Tasks: `task config:pki-secret`, `task deploy:pki-secret`, `task verify:pki-secret`, `task rotate:pki-secret`
 - Instances: controlled by the `pki_app_count` variable (default 3)
 
@@ -12,181 +14,70 @@ Issues a TLS certificate per namespace from a **single** shared service account 
 ```mermaid
 flowchart LR
   subgraph vault["Vault Enterprise - namespace tn001"]
-    PKI[("pki/issue/pki-app<br/>allowed_domains:<br/>svc.cluster.local, svc, example.com")]
-    ROLE["auth/k8s-auth-mount<br/>role: pki-secret<br/>bound ns glob: pki-app-*"]
+    ROLE["auth/kubernetes-auth-mount<br/>role: pki-secret<br/>use_annotations_as_alias_metadata"]
+    POL["policy pki-secret<br/>pki/issue/{{...metadata.pki_role}}"]
+    PKI[("pki/roles/pki-app-N<br/>allowed_domains: pki-app-N.*")]
   end
 
-  subgraph vso["vault-secrets-operator"]
-    OP["VSO controller"]
-    VA["VaultAuth: pki-auth<br/>allowedNamespaces: *<br/>SHARED"]
+  subgraph a["pki-app-N"]
+    SA["ServiceAccount pki-app-N-sa<br/>alias-metadata-pki_role: pki-app-N"]
+    VA["VaultAuth pki-auth"]
+    C["VaultPKISecret pki-app-cert"]
+    T["Secret pki-app-tls"]
+    P["Deployment pki-app"]
   end
 
-  subgraph a["pki-app-1"]
-    SA1["ServiceAccount<br/>pki-app-sa"]
-    C1["VaultPKISecret<br/>pki-app-cert"]
-    T1["Secret pki-app-tls"]
-    P1["Deployment pki-app"]
-  end
-
-  subgraph b["pki-app-2 / pki-app-3"]
-    SAN["ServiceAccount<br/>pki-app-sa"]
-    CN["VaultPKISecret<br/>pki-app-cert"]
-    TN["Secret pki-app-tls"]
-    PN["Deployment pki-app"]
-  end
-
-  C1 -->|vaultAuthRef<br/>vault-secrets-operator/pki-auth| VA
-  CN -->|vaultAuthRef<br/>vault-secrets-operator/pki-auth| VA
-  OP -->|TokenRequest| SA1
-  OP -->|TokenRequest| SAN
-  VA -->|JWT login| ROLE
-  ROLE --> PKI
-  OP --> T1 --> P1
-  OP --> TN --> PN
+  C --> VA -->|kubernetes login| ROLE
+  ROLE -->|TokenReview + read SA annotations| SA
+  ROLE --> POL --> PKI
+  C --> T --> P
 ```
 
-Contrast with the other examples: they stamp out a `VaultAuth` per namespace, this one does not.
-The only per-namespace objects are the `ServiceAccount`, the `VaultPKISecret` and the `Deployment`.
+## How it works
 
-## Why the service account is shared
+1. `pki-app-N-sa` carries `vault.hashicorp.com/alias-metadata-<key>` annotations: `pki_role`, `application_name`
+   and `namespace` (each `pki-app-N`), plus `team: platform` and `business_unit: shared-services`. These are the
+   same keys the entity example uses, and only `pki_role` is used in the policy.
+2. VSO logs in to `kubernetes-auth-mount`, a **kubernetes** auth mount in `tn001`. JWT auth cannot read
+   annotations, so this mount is separate from the JWT `k8s-auth-mount`. With
+   `use_annotations_as_alias_metadata=true`, Vault reads the SA and copies each
+   `vault.hashicorp.com/alias-metadata-<key>` annotation into the alias metadata. It reads the SA with the
+   `vault-token-reviewer` token, and `vault-ent/vault-sa-reader-rbac.yaml` grants that token `get serviceaccounts`.
+3. The `pki-secret` policy is written with the mount accessor filled in:
+   ```hcl
+   path "pki/issue/{{identity.entity.aliases.<accessor>.metadata.pki_role}}" { ... }
+   ```
+   So each app can only issue from its own role, and each role only allows that app's names. An SA
+   without the annotation gets no access.
+4. Aliases are named `<namespace>/<sa>` (`alias_name_source=serviceaccount_name`), so each app has its own
+   identity. The metadata is refreshed on every login, so after changing an annotation, re-create the
+   `VaultAuth` to force VSO to log in again.
 
-Sharing one service account *name* is scoped to the PKI use case. It keeps the Vault client
-configuration simple and reduces onboarding friction: adding a namespace needs only a
-`ServiceAccount` and a `VaultPKISecret`, with no new `VaultAuth`, Vault auth role or policy.
-
-Three consequences matter:
-
-1. **It is not a tenancy boundary.** All `pki-app-*` namespaces authenticate as the same Vault
-   identity - a single entity alias named `pki-app-sa` - so any of them can request any name the
-   issuing role allows, including another namespace's. Use cases needing per-tenant authorization
-   should give each namespace its own service account name, as the
-   [entity metadata example](entity-secrets.md) does.
-2. **The service account must exist in each consuming namespace.** VSO resolves
-   `spec.jwt.serviceAccount` in the namespace of the requesting resource, not the `VaultAuth`'s.
-   Placing `pki-app-sa` only in `vault-secrets-operator` fails with
-   `ServiceAccount "pki-app-sa" not found`.
-3. **The policy grants issuance only.** `pki/revoke` is deliberately withheld, since one shared
-   policy plus a serial number read from any peer's certificate would let one namespace revoke
-   another's. `VaultPKISecret` therefore does not set `revoke: true`.
-
-Two further notes: `vaultConnectionRef` is **required** on resources in the operator's own
-namespace, and `allowedNamespaces` does **not** support globs - `pki-app-*` there is read as a
-literal namespace name and matches nothing.
+Anyone who can edit ServiceAccounts in a `pki-app-*` namespace can change its annotations, so restrict that
+RBAC in real clusters. The policy grants issuance only (no `pki/revoke`).
 
 ## Certificate shapes
 
-`pki-app-3` requests a wildcard (`*.pki-app-3.svc.cluster.local`) while the others request concrete
-names, so both shapes come out of the same role. Every certificate also carries a
-`pki-app-N.example.com` SAN, so one `pki-app-tls` Secret could serve the pod *and* an external load
-balancer. To front it with an Ingress, reference the Secret as `spec.tls[].secretName` from the
-**same namespace** - which is where VSO already writes it. Nothing trusts this CA, so verification is
-explicit:
+`pki-app-3` requests a wildcard (`*.pki-app-3.svc.cluster.local`) and the others request concrete names.
+Every certificate also carries a `pki-app-N.example.com` SAN, so one `pki-app-tls` Secret could serve the pod
+and an Ingress in the same namespace.
 
-```bash
-kubectl exec vault-0 -n vault -- sh -c \
-  "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read -field=certificate pki/cert/ca" > root.crt
-curl --cacert root.crt --resolve pki-app-1.example.com:443:$(minikube ip) \
-  https://pki-app-1.example.com
-```
-
-In production, in-cluster mTLS and public load-balancer termination normally want separate
-certificates with different lifetimes and CAs; sharing one here is a lab convenience.
-
-## Vault configuration
-
-**Shared PKI Role**
-- Role name: `pki-secret`
-- Policy: `pki-secret`
-- Bound service accounts: `pki-app-sa`
-- Bound namespaces: `pki-app-*` (glob pattern)
-- Token TTL: 1 hour
-- Permissions:
-  - Create/Update: `pki/issue/pki-app`
-- Note: a single `VaultAuth` (`pki-auth`) in `vault-secrets-operator` serves every bound namespace
-
-The `pki` mount is shared with the [dynamic secrets example](dynamic-secrets.md), which uses the
-`example-dot-com` role on the same mount. Both `config:pki-secret` and `config:dynamic-secret` seed
-the root CA only when `pki/cert/ca` is absent, so they converge on whichever CA already exists and
-can be run in either order, repeatedly, without invalidating issued certificates.
-
-The corollary is that the CA is sticky: neither task will ever rotate it. To start from a new CA,
-tear the mount down first with `task uninstall:apps` (which disables `pki`), then re-run the config
-tasks and `task rotate:pki-secret` to re-issue.
-
-## Synchronisation flow
-
-Unlike the static, dynamic, CSI and entity demos - which each create their own `VaultAuth` per
-namespace - the PKI demo uses **one** `VaultAuth`, **one** Vault auth role and **one** PKI issuing
-role for every `pki-app-*` namespace.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. VaultPKISecret created in pki-app-N                     │
-│     - vaultAuthRef: vault-secrets-operator/pki-auth         │
-│     - the only per-namespace objects are the                │
-│       ServiceAccount, the VaultPKISecret and the Deployment │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. VSO resolves the shared VaultAuth                       │
-│     - allowedNamespaces: ["*"] permits the reference        │
-│     - vaultConnectionRef: default (required in the          │
-│       operator's own namespace)                             │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. VSO mints a ServiceAccount token                        │
-│     - pki-app-sa is resolved in the REQUESTING namespace,   │
-│       not in the VaultAuth's namespace                      │
-│     - audience: vault                                       │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. Vault validates the login                               │
-│     - auth/k8s-auth-mount/role/pki-secret in tn001          │
-│     - bound_claims glob pki-app-* gates the namespace       │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. Certificate issued from pki/issue/pki-app               │
-│     - allowed_domains gates the requested names             │
-│     - policy grants issuance only, never revoke             │
-└─────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  6. Secret synced and workload restarted                    │
-│     - kubernetes.io/tls Secret pki-app-tls                  │
-│     - mounted at /etc/tls                                   │
-│     - rolloutRestartTargets restarts the Deployment         │
-└─────────────────────────────────────────────────────────────┘
-```
+The `pki` mount is shared with the [dynamic secrets example](dynamic-secrets.md) (role `example-dot-com`).
+Both config tasks create the root CA only when `pki/cert/ca` is absent, so they can run in either order. To
+start from a new CA, run `task uninstall:apps`, re-run the config tasks, then `task rotate:pki-secret`.
 
 ## Verification
 
 ```bash
-task verify:pki-secret
+task verify:pki-secret     # VaultAuth per namespace, certs, auth role, templated policy, pki roles
+task list:identity-entities | grep -B2 -A8 pki_role   # alias metadata from the SA annotations
+task rotate:pki-secret     # deletes pki-app-tls; VSO re-issues and restarts
 ```
 
-This shows the single `pki-auth` `VaultAuth` (none in any `pki-app-*` namespace), each
-`VaultPKISecret`, each issued certificate, and the shared auth and issuing roles. Expect each
-subject to name its own namespace, issued by `CN=example.com`: `pki-app-1` and `pki-app-2` get
-concrete names (`pki-app.pki-app-N.svc.cluster.local`), `pki-app-3` a wildcard
-(`*.pki-app-3.svc.cluster.local`), and every SAN list includes `pki-app-N.example.com`.
-
-```bash
-kubectl get vaultpkisecret -A                        # pki-app-cert synced in every pki-app-* namespace
-task list:identity-entities | grep -A3 pki-app-sa    # one shared alias - expected, not a defect
-task rotate:pki-secret                               # deletes pki-app-tls; VSO re-issues and restarts
-```
+A `VaultPKISecret` in `pki-app-1` that requests `role: pki-app-2` fails with `403 permission denied`.
 
 ## Related
 
 - [Architecture overview](architecture.md)
-- [Dynamic secrets example](dynamic-secrets.md) - the other role on the `pki` mount
-- [Entity metadata example](entity-secrets.md) - a unique service account name per app instead
+- [Entity metadata example](entity-secrets.md) - pre-created entities instead of annotations
 - [Troubleshooting](troubleshooting.md)

@@ -152,5 +152,5 @@ it lapses.
 ## Related
 
 - [Architecture overview](architecture.md)
-- [Shared PKI example](pki-secrets.md) - a second role on the same `pki` mount
+- [PKI example](pki-secrets.md) - per-app roles on the same `pki` mount
 - [Troubleshooting](troubleshooting.md)

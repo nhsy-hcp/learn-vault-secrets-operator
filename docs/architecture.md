@@ -25,7 +25,7 @@ Each example has its own walkthrough - see [Examples](#examples).
 │  │  static-app-*   VaultAuth + VaultStaticSecret                │    │
 │  │  dynamic-app    VaultAuth + VaultDynamicSecret/VaultPKISecret│    │
 │  │  csi-app        VaultAuth + CSISecrets (CSI volume)          │    │
-│  │  pki-app-*      VaultPKISecret (shared VaultAuth in VSO ns)  │    │
+│  │  pki-app-*      VaultAuth + VaultPKISecret (kubernetes auth) │    │
 │  │  entity-app-*   VaultAuth + VaultStaticSecret                │    │
 │  │  vault-agent-app  Vault Agent init container (optional)      │    │
 │  └──────────────────────────────────────────────────────────────┘    │
@@ -38,10 +38,11 @@ Each example has its own walkthrough - see [Examples](#examples).
 |---|---|---|---|
 | `vso` | `k8s-auth-mount` | kubernetes (token reviewer) | VSO controller (role `auth-role-operator`) |
 | `vso` | `vso-transit` | transit, key `vso-client-cache` | VSO encrypted client cache |
-| `tn001` | `k8s-auth-mount` | jwt (OIDC discovery) | every demo application |
+| `tn001` | `k8s-auth-mount` | jwt (OIDC discovery) | every demo application except PKI |
+| `tn001` | `kubernetes-auth-mount` | kubernetes, SA annotations as alias metadata | PKI |
 | `tn001` | `kvv2` | kv-v2 | static, CSI, entity, Vault Agent |
 | `tn001` | `db` | database, role `dev-postgres` | dynamic |
-| `tn001` | `pki` | pki, roles `example-dot-com` and `pki-app` | dynamic, shared PKI |
+| `tn001` | `pki` | pki, roles `example-dot-com` and `pki-app-N` | dynamic, PKI |
 
 KV v2 paths in `tn001`:
 
@@ -72,7 +73,7 @@ write Kubernetes Secret (or CSI volume) → update status → cache (encrypted) 
 | `static-app-1..3` | `static-app-sa` (same name in each) | Static secrets |
 | `dynamic-app` | `dynamic-app-sa` | Dynamic database credentials and TLS |
 | `csi-app` | `csi-app-sa` | CSI secrets |
-| `pki-app-1..3` | `pki-app-sa` (same name in each) | Shared PKI certificates |
+| `pki-app-1..3` | `pki-app-N-sa` (unique, annotated with metadata) | PKI certificates |
 | `entity-app-1..3` | `entity-app-N-sa` (unique per namespace) | Entity metadata |
 | `vault-agent-app` | `vault-agent-sa` | Vault Agent sidecar (optional) |
 
@@ -90,7 +91,7 @@ Two auth mounts, both named `k8s-auth-mount`, live in different Vault namespaces
  └─────────────────▲──────────────────┘       └─────────────────▲──────────────────┘
                    │ controller SA token                        │ app SA tokens (aud: vault)
       vault-secrets-operator-controller-manager   static-app-sa, dynamic-app-sa, csi-app-sa,
-                                                  pki-app-sa, entity-app-N-sa, vault-agent-sa
+                                                  entity-app-N-sa, vault-agent-sa
 ```
 
 - **`vso` mount** (`task config:vso:encrypted-cache`): Kubernetes auth. Vault calls the TokenReview
@@ -111,10 +112,10 @@ signature, issuer and bound claims → issues a Vault token with the role's poli
 
 Each example has its own Vault role and policy in `tn001`, but isolation differs by design:
 
-- **Static, shared PKI, entity**: one role serves several namespaces through glob bound claims
+- **Static, PKI, entity**: one role serves several namespaces through globs
   (`static-app-*`, `pki-app-*`, `entity-app-*`).
-- **Shared PKI**: every namespace uses the same SA name, so all log in as one alias - deliberately
-  not a tenancy boundary.
+- **PKI**: logs in to the separate kubernetes auth mount `kubernetes-auth-mount`, where SA annotations
+  become alias metadata. A templated policy restricts each app to its own `pki/roles/pki-app-N`.
 - **Entity metadata**: each namespace has a unique SA name, mapped to a pre-created entity whose
   metadata attributes usage for chargeback; the templated policy also scopes reads to the entity's
   `team`.
@@ -129,7 +130,7 @@ Role and policy details are in each example's walkthrough.
 | Static secrets | `VaultStaticSecret` → Kubernetes `Secret` | `vault-ent/static-secrets/` | [static-secrets.md](static-secrets.md) |
 | Dynamic secrets | `VaultDynamicSecret` / `VaultPKISecret` → `Secret`, leased | `vault-ent/dynamic-secrets/` | [dynamic-secrets.md](dynamic-secrets.md) |
 | CSI secrets | `CSISecrets` → pod CSI volume, no `Secret` | `vault-ent/csi-secrets/` | [csi-secrets.md](csi-secrets.md) |
-| Shared PKI | One shared `VaultAuth` → `kubernetes.io/tls` `Secret` per namespace | `vault-ent/pki-secrets/` | [pki-secrets.md](pki-secrets.md) |
+| PKI | SA annotation metadata + templated policy → `kubernetes.io/tls` `Secret` per namespace | `vault-ent/pki-secrets/` | [pki-secrets.md](pki-secrets.md) |
 | Entity metadata | Pre-created entity + templated policy → `Secret` per namespace | `vault-ent/entity-secrets/` | [entity-secrets.md](entity-secrets.md) |
 | Vault Agent (optional) | Agent init container → rendered file, no `Secret` | `vault-ent/vault-agent-secrets/` | [vault-agent-secrets.md](vault-agent-secrets.md) |
 

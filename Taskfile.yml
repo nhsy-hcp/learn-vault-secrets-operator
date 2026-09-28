@@ -363,24 +363,12 @@ tasks:
             common_name=\"example.com\" \
             ttl=87600h"
         fi
-      - kubectl cp vault-ent/pki-secrets/pki-secret.hcl vault-0:/tmp/pki-secret.hcl -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write pki-secret /tmp/pki-secret.hcl"
-      - kubectl cp vault-ent/pki-secrets/pki-secret-role.json vault-0:/tmp/pki-secret-role.json -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/pki-secret @/tmp/pki-secret-role.json"
-      # allowed_domains defines which certs may be minted; "svc" covers the short in-cluster name
-      - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write pki/roles/pki-app \
-          allowed_domains=\"svc.cluster.local,svc,example.com\" \
-          allow_subdomains=true \
-          allow_bare_domains=false \
-          allow_wildcard_certificates=true \
-          allow_ip_sans=false \
-          allow_localhost=false \
-          key_type=rsa \
-          key_bits=2048 \
-          ttl=1h \
-          max_ttl={{ .pki_max_ttl }}"
+      - kubectl apply -f vault-ent/vault-sa-reader-rbac.yaml
+      # kubernetes auth mount, templated policy/role and one issuing role per app
+      - ./scripts/config-pki-secret.sh {{ .pki_app_count }} {{ .pki_max_ttl }}
     env:
+      KUBE_HOST:
+        sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
 
@@ -530,9 +518,6 @@ tasks:
   deploy:pki-secret:
     desc: Deploy PKI certificate resources for all app instances
     cmds:
-      # One shared VaultAuth for all app instances
-      - kubectl apply -f vault-ent/pki-secrets/pki-vault-auth.yaml
-      - sleep 3
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
           APP_NAME="pki-app-${i}"
@@ -550,6 +535,8 @@ tasks:
           echo "Deploying ${APP_NAME} (CN=${COMMON_NAME})..."
           sed "s/\${APP_NAME}/${APP_NAME}/g" \
             vault-ent/pki-secrets/templates/service-account.yaml.tpl | kubectl apply -f -
+          sed "s/\${APP_NAME}/${APP_NAME}/g" \
+            vault-ent/pki-secrets/templates/vault-auth.yaml.tpl | kubectl apply -f -
           sed -e "s/\${APP_NAME}/${APP_NAME}/g" \
               -e "s/\${COMMON_NAME}/${COMMON_NAME}/g" \
               -e "s/\${ALT_NAME}/${ALT_NAME}/g" \
@@ -681,8 +668,8 @@ tasks:
       - test -f vault-init.json
     desc: Verify PKI certificates were issued for all app instances
     cmds:
-      - echo "=== One shared VaultAuth serves every app namespace ==="
-      - kubectl get vaultauth -A
+      - echo "=== One VaultAuth and service account per app namespace ==="
+      - kubectl get vaultauth -A | grep -E 'NAMESPACE|pki-app-'
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
           APP_NAME="pki-app-${i}"
@@ -696,10 +683,12 @@ tasks:
             | base64 -d \
             | openssl x509 -noout -subject -issuer -enddate -ext subjectAltName
         done
-      - echo "\n=== The single shared auth role in Vault namespace tn001 ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/k8s-auth-mount/role/pki-secret"
-      - echo "\n=== The single shared PKI issuing role (allowed_domains defines what may be minted) ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read pki/roles/pki-app"
+      - echo "\n=== Auth role on the kubernetes auth mount in Vault namespace tn001 ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/kubernetes-auth-mount/role/pki-secret"
+      - echo "\n=== Templated policy (pki_role comes from the service account annotation) ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy read pki-secret"
+      - echo "\n=== Per-app PKI issuing roles ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault list pki/roles"
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -980,8 +969,8 @@ tasks:
           kubectl delete deployment --all -n "${APP_NAME}" --ignore-not-found
           kubectl delete pods --all -n "${APP_NAME}" --force --ignore-not-found
           kubectl delete vaultpkisecret --all -n "${APP_NAME}" --ignore-not-found || true
+          kubectl delete vaultauth --all -n "${APP_NAME}" --ignore-not-found || true
         done
-      - kubectl delete vaultauth pki-auth -n vault-secrets-operator --ignore-not-found || true
       - |
         for APP_NAME in $(jq -r '.[].name' {{ .entity_apps_file }}); do
           echo "Cleaning up ${APP_NAME}..."
@@ -1012,6 +1001,8 @@ tasks:
       - kubectl delete ns csi-app --ignore-not-found
       - kubectl delete ns vault-agent-app --ignore-not-found
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable k8s-auth-mount" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable kubernetes-auth-mount" || true
+      - kubectl delete -f vault-ent/vault-sa-reader-rbac.yaml --ignore-not-found
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable db" || true
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable pki" || true
     env:

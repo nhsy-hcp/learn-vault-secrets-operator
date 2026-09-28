@@ -45,19 +45,18 @@ Repo-specific symptoms for each example. Start with the automated checks: `task 
 - Check the `CSISecrets` resource: `kubectl describe csisecrets csi-demo -n csi-app`.
 - After rotating with `task rotate:csi:secret`, remount with `task restart:csi-secret`.
 
-## Shared PKI
+## PKI
 
-- **`ServiceAccount "pki-app-sa" not found`:** the SA must exist in the **requesting** namespace, not
-  in `vault-secrets-operator`.
-- **`vaultConnectionRef must be set...`:** this field is required on resources in the operator's own
-  namespace.
-- **`claim "/kubernetes.io/namespace" does not match...`:** the namespace is outside the `pki-app-*`
-  glob. Check the auth role `pki-secret`. Don't confuse it with the issuing role, `pki-app`.
+- **`403 permission denied` on issue:** the SA's `vault.hashicorp.com/alias-metadata-pki_role`
+  annotation is missing or doesn't match the `VaultPKISecret` `role`. After fixing it, re-create
+  `VaultAuth/pki-auth` to force a fresh login.
+- **Login fails with a service account read error:** Vault can't read the SA's annotations. Check
+  that `vault-ent/vault-sa-reader-rbac.yaml` has been applied.
+- **`service account name not authorized` / `namespace not authorized`:** the SA must be named
+  `pki-app-*-sa` and live in a `pki-app-*` namespace (auth role `pki-secret` on `kubernetes-auth-mount`).
 - **`common name ... not allowed by this role`:** the name is outside `allowed_domains` on
-  `pki/roles/pki-app`. Note that `<name>.<ns>.svc` is a subdomain of `svc`, not of
+  `pki/roles/pki-app-N`. Note that `<name>.<ns>.svc` is a subdomain of `svc`, not of
   `svc.cluster.local`.
-- **`target namespace ... is not allowed by kind=VaultAuth`:** `allowedNamespaces` does **not**
-  support globs.
 - **Pod stuck in `ContainerCreating`:** it mounts `pki-app-tls`, which doesn't exist until the
   certificate is issued. Fix the sync error and the pod recovers.
 - **Certificates no longer chain to the CA:** the `pki` mount was re-created with a new root CA. Run

@@ -18,7 +18,7 @@ spec:
       labels:
         app: pki-app
     spec:
-      serviceAccountName: pki-app-sa
+      serviceAccountName: ${APP_NAME}-sa
       volumes:
         - name: pki-app-certs
           secret:
@@ -34,7 +34,7 @@ spec:
               while true; do
                 echo "=== Namespace: ${APP_NAME} ==="
                 echo ""
-                echo "=== Certificate issued by the SHARED pki/roles/pki-app ==="
+                echo "=== Certificate issued by pki/roles/${APP_NAME} ==="
                 if [ -f /etc/tls/tls.crt ]; then
                   openssl x509 -in /etc/tls/tls.crt -noout \
                     -subject -issuer -enddate -ext subjectAltName

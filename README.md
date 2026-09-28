@@ -16,8 +16,8 @@ configuration, and its synchronization flow:
   generated on demand
 - **[CSI Secrets](docs/csi-secrets.md)** - Secrets mounted straight into the pod filesystem, with no
   Kubernetes `Secret` created
-- **[Shared PKI Secrets](docs/pki-secrets.md)** - One shared `VaultAuth` and service account issuing a
-  certificate per namespace
+- **[PKI Secrets](docs/pki-secrets.md)** - A per-app service account whose annotations become Vault alias
+  metadata; a templated policy limits each app to its own PKI role
 - **[Entity Metadata Secrets](docs/entity-secrets.md)** - Pre-created Vault identity entities carry
   application, team and business-unit metadata, so Vault usage can be traced back to each app for
   chargeback; a templated policy also uses the `team` value to scope secret access

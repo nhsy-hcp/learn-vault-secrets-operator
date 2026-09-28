@@ -94,8 +94,7 @@ name is the service account name. The alias must be known **before** the app fir
 be unique per app - so each app gets a service account named `<app>-sa` (`entity-app-1-sa`, ...),
 and the role binds the glob `entity-app-*-sa`.
 
-This is the opposite of the [shared PKI](pki-secrets.md#why-the-service-account-is-shared) and
-[static secrets](static-secrets.md) examples, where every namespace uses the same service account
+This is the opposite of the [static secrets](static-secrets.md) example, where every namespace uses the same service account
 name, logs in as a single alias and shares one entity - per-app metadata would be overwritten by
 whichever app was onboarded last. An alternative that keeps a shared name is `user_claim: /sub`
 (the role sets `user_claim_json_pointer`), whose value `system:serviceaccount:<namespace>:<name>`
@@ -208,5 +207,5 @@ task verify:entity-secret     # entity-app-3 syncs team risk again
 
 - [Architecture overview](architecture.md)
 - [Static secrets example](static-secrets.md) - same `kvv2` mount, one shared alias
-- [Shared PKI example](pki-secrets.md) - one shared service account name by design
+- [PKI example](pki-secrets.md) - the same metadata keys, set from ServiceAccount annotations instead of pre-created entities
 - [Troubleshooting](troubleshooting.md)
