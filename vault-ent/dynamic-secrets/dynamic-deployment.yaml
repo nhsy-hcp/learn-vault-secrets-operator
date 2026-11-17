@@ -35,11 +35,13 @@ spec:
           args:
             - |
               apk add --no-cache openssl postgresql-client
+              # passwords are masked so pod logs (and CI output) never show the value
+              mask() { if [ -n "$1" ]; then echo "<${#1} chars, hidden>"; else echo "<empty>"; fi; }
               echo ""
               while true; do
                 echo "=== Dynamic Database Credentials from ENV ==="
                 echo "Username: $DB_USERNAME"
-                echo "Password: $DB_PASSWORD"
+                echo "Password: $(mask "$DB_PASSWORD")"
                 echo ""
                 echo "=== Testing Database Connection ==="
                 if PGPASSWORD="$DB_PASSWORD" psql -h postgres -p 5432 \

@@ -29,15 +29,17 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
           - |
+            # passwords are masked so pod logs (and CI output) never show the value
+            mask() { if [ -n "$1" ]; then echo "<${#1} chars, hidden>"; else echo "<empty>"; fi; }
             while true; do
               echo "=== Entity Secrets from ENV ==="
               echo "Team: $TEAM"
               echo "Username: $USERNAME"
-              echo "Password: $PASSWORD"
+              echo "Password: $(mask "$PASSWORD")"
               echo ""
               echo "=== Entity Secrets from file ==="
               echo "Username: $(cat /secrets/entity/username 2>/dev/null)" || echo "username file not found"
-              echo "Password: $(cat /secrets/entity/password 2>/dev/null)" || echo "password file not found"
+              echo "Password: $(mask "$(cat /secrets/entity/password 2>/dev/null)")"
               echo ""
               echo "=== All mounted secrets in /secrets/entity ==="
               echo ""

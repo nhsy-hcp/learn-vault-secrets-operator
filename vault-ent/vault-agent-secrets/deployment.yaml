@@ -61,8 +61,9 @@ spec:
                 echo "=== Vault Agent Secrets ==="
                 echo ""
                 if [ -f /vault/secrets/config.txt ]; then
-                  echo "Contents of /vault/secrets/config.txt:"
-                  cat /vault/secrets/config.txt
+                  echo "Contents of /vault/secrets/config.txt (password masked):"
+                  # allow-list: show USERNAME, mask every other value
+                  sed 's/^\(USERNAME=.*\)$/\1/;t;s/=.*/=<hidden>/' /vault/secrets/config.txt
                 else
                   echo "Waiting for secrets to be rendered..."
                 fi

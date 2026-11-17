@@ -29,14 +29,16 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
           - |
+            # passwords are masked so pod logs (and CI output) never show the value
+            mask() { if [ -n "$1" ]; then echo "<${#1} chars, hidden>"; else echo "<empty>"; fi; }
             while true; do
               echo "=== Static Secrets from ENV ==="
               echo "Username: $USERNAME"
-              echo "Password: $PASSWORD"
+              echo "Password: $(mask "$PASSWORD")"
               echo ""
               echo "=== Static Secrets from file ==="
               echo "Username: $(cat /secrets/static/username 2>/dev/null)" || echo "username file not found"
-              echo "Password: $(cat /secrets/static/password 2>/dev/null)" || echo "password file not found"
+              echo "Password: $(mask "$(cat /secrets/static/password 2>/dev/null)")"
               echo ""
               echo "=== All mounted secrets in /secrets/static ==="
               echo ""
