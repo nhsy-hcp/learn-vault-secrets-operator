@@ -35,6 +35,7 @@ vault-ent/
 - `eks/` - EKS infrastructure provisioning
 - `gke/` - GKE infrastructure provisioning
 - `Taskfile.yml` - Task automation definitions
+- `docs/diagrams/` - Diagram sources (Python `diagrams`, uv project) rendered to `docs/images/*.png`
 - `docs/` - Documentation, including one walkthrough per example:
   `static-secrets.md`, `dynamic-secrets.md`, `csi-secrets.md`, `pki-secrets.md`,
   `entity-secrets.md`, `vault-agent-secrets.md`, plus system-level `architecture.md` and
@@ -186,6 +187,7 @@ Not chained into `task secrets` or `task all` - run these explicitly. Requires
 - `task lint` - Run pre-commit hooks on all files
 - `task lint:eks` - Run tflint on EKS Terraform configuration
 - `task lint:gke` - Run tflint on GKE Terraform configuration
+- `task docs:diagrams` - Render `docs/diagrams/*.py` to `docs/images/*.png` (needs uv and Graphviz)
 
 ### Debugging Tasks
 - `task status` - Check Vault status

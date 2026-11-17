@@ -2,34 +2,11 @@
 
 How Vault Enterprise, the Vault Secrets Operator (VSO) and the demo applications fit together.
 Each example has its own walkthrough - see [Examples](#examples).
+Diagrams are rendered from [`docs/diagrams/`](diagrams/) with `task docs:diagrams` (needs uv and Graphviz).
 
 ## High-level view
 
-```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
-flowchart TB
-  classDef app fill:#ffffff,stroke:#4b5563,stroke-width:2px,color:#111827
-  classDef vso fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
-  classDef vault fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827
-  classDef out fill:#ecfdf5,stroke:#15803d,stroke-width:2px,color:#14532d
-  classDef k8s fill:#e5e7eb,stroke:#6b7280,stroke-width:2px,color:#111827
-  subgraph k8s["Kubernetes cluster"]
-    V("<b>Vault Enterprise</b><br/>vault ns<br/>namespaces: vso, tn001")
-    VSO("<b>Vault Secrets Operator (VSO)</b><br/>vault-secrets-operator ns<br/>watches VSO custom resources<br/>logs in with app SA tokens<br/>syncs Secrets / CSI volumes")
-    APPS("<b>Application namespaces</b><br/>static-app-* · VaultAuth + VaultStaticSecret<br/>dynamic-app · VaultAuth + VaultDynamicSecret/VaultPKISecret<br/>csi-app · VaultAuth + CSISecrets (CSI volume)<br/>pki-app-* · cert-manager Certificate → VaultClusterIssuer<br/>entity-app-* · VaultAuth + VaultStaticSecret<br/>vault-agent-app · Vault Agent init container (optional)")
-  end
-
-  VSO -->|log in, read / issue| V
-  VSO -->|sync Secrets / CSI volumes| APPS
-  APPS -.->|"Vault Agent (direct login)"| V
-
-  class APPS app
-  class VSO vso
-  class V vault
-  style k8s fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
-  linkStyle 1 stroke:#15803d,stroke-width:2px
-  linkStyle 2 stroke:#9ca3af,stroke-dasharray:4
-```
+![Architecture overview](images/architecture.png)
 
 ## Vault
 

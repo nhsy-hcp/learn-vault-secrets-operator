@@ -834,6 +834,17 @@ tasks:
   # Code Quality
   # ============================================================================
 
+  docs:diagrams:
+    desc: Render the doc diagrams (docs/diagrams/*.py -> docs/images/*.png); needs uv and Graphviz
+    dir: docs/diagrams
+    cmds:
+      - |
+        unset VIRTUAL_ENV  # use docs/diagrams/.venv, not an outer activated venv
+        for f in architecture static_secrets dynamic_secrets csi_secrets pki_secrets entity_secrets vault_agent_secrets; do
+          echo "Rendering ${f}..."
+          uv run --frozen python "${f}.py"
+        done
+
   test:ci:
     desc: Run the full CI verification pipeline (lint only; e2e requires a live cluster)
     cmds:
