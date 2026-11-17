@@ -9,7 +9,10 @@ issuer to its PKI role.
 - Script: [`scripts/config-pki-secret.sh`](../scripts/config-pki-secret.sh)
 - Tasks: `task config:pki-secret`, `task deploy:pki-secret`, `task verify:pki-secret`, `task rotate:pki-secret`
 - Instances: controlled by the `pki_app_count` variable (default 3)
-- cert-manager is installed by `task install` (`install:cert-manager`)
+- cert-manager is installed by `task install` (`install:cert-manager`); `task config:pki-secret` needs both cert-manager
+  and VSO running, because it applies the `VaultClusterIssuer` and waits for it
+- Upgrading a lab deployed with the earlier `VaultPKISecret` version: run `task uninstall` first, otherwise VSO and
+  cert-manager both write `pki-app-tls`
 
 ## Architecture
 
@@ -86,7 +89,8 @@ Every certificate also carries a `pki-app-N.example.com` SAN, so one `pki-app-tl
 and an Ingress in the same namespace.
 
 All pods in a namespace share `pki-app-tls`; pod restarts reuse it, and only renewal, spec changes or deleting the
-Secret re-issue. VSO caches the issuer's Vault token, not certificates.
+Secret re-issue. VSO caches the issuer's Vault token, not certificates. Pods are not restarted on renewal; the
+kubelet refreshes the mounted Secret volume and the app re-reads `/etc/tls`.
 
 The `pki` mount is shared with the [dynamic secrets example](dynamic-secrets.md) (role `example-dot-com`, still
 delivered by a `VaultPKISecret`). Both config tasks create the root CA only when `pki/cert/ca` is absent.

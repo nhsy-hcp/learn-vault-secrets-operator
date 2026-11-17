@@ -56,7 +56,7 @@ KV v2 paths in `tn001`:
 - A default `VaultConnection` to `http://vault.vault.svc.cluster.local:8200` is created by the Helm
   chart (`vault-ent/vault-operator-values.yaml`), with the CSI driver enabled.
 - Custom resources used by the demos: `VaultConnection`, `VaultAuth`, `VaultStaticSecret`,
-  `VaultDynamicSecret`, `VaultPKISecret`, `CSISecrets`.
+  `VaultDynamicSecret`, `VaultPKISecret`, `CSISecrets`, `VaultClusterIssuer` (with cert-manager `Certificate`s).
 
 ```
 Watch resources → log in to Vault → read/issue secrets →
