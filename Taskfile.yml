@@ -7,7 +7,8 @@ vars:
   postgresql_max_ttl: "24h"
   vault_version_tag: "2.1-ent"
   vault_chart_version: "0.34.1"
-  vso_version_tag: "1.6.0"
+  vso_version_tag: "2.0.0"
+  cert_manager_version: "v1.21.3"
   static_app_count: 3
   pki_app_count: 3
   entity_apps_file: vault-ent/entity-secrets/apps.json
@@ -47,6 +48,7 @@ tasks:
       - task: init:vault
       - task: unseal:vault
       - task: config:vault
+      - task: install:cert-manager
       - task: install:vso
 
   secrets:
@@ -105,6 +107,7 @@ tasks:
         fi
       - echo "All prerequisites found"
       - helm repo add hashicorp https://helm.releases.hashicorp.com
+      - helm repo add jetstack https://charts.jetstack.io
       - helm repo update
     silent: true
 
@@ -355,7 +358,7 @@ tasks:
   config:pki-secret:
     preconditions:
       - test -f vault-init.json
-    desc: Configure Vault for shared PKI certificates in tn001 namespace
+    desc: Configure Vault PKI and the cert-manager VaultClusterIssuer in tn001 namespace
     cmds:
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
@@ -376,6 +379,9 @@ tasks:
       - kubectl apply -f vault-ent/vault-sa-reader-rbac.yaml
       # kubernetes auth mount, templated policy/role and one issuing role per app
       - ./scripts/config-pki-secret.sh {{ .pki_app_count }} {{ .pki_max_ttl }}
+      # issuer service account, VaultAuth and the cluster-wide cert-manager issuer
+      - kubectl apply -f vault-ent/pki-secrets/cluster-issuer.yaml
+      - kubectl wait vaultclusterissuer/vault-pki --for=condition=Ready --timeout=2m
     env:
       KUBE_HOST:
         sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
@@ -422,6 +428,20 @@ tasks:
   # ============================================================================
   # VSO Installation
   # ============================================================================
+
+  install:cert-manager:
+    desc: Install cert-manager (signs PKI lab certificates via the VSO VaultClusterIssuer)
+    cmds:
+      - |
+        helm upgrade --install cert-manager jetstack/cert-manager \
+          -n cert-manager \
+          --create-namespace \
+          --version {{ .cert_manager_version }} \
+          --set crds.enabled=true
+      - kubectl rollout status deployment/cert-manager -n cert-manager --timeout=5m
+      - kubectl rollout status deployment/cert-manager-webhook -n cert-manager --timeout=5m
+      - kubectl rollout status deployment/cert-manager-cainjector -n cert-manager --timeout=5m
+    silent: true
 
   install:vso:
     desc: Install Vault Secrets Operator with CSI driver enabled
@@ -527,7 +547,7 @@ tasks:
       - sleep 10
 
   deploy:pki-secret:
-    desc: Deploy PKI certificate resources for all app instances
+    desc: Deploy cert-manager Certificates and apps for all PKI app instances
     cmds:
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
@@ -544,16 +564,12 @@ tasks:
           fi
 
           echo "Deploying ${APP_NAME} (CN=${COMMON_NAME})..."
-          sed "s/\${APP_NAME}/${APP_NAME}/g" \
-            vault-ent/pki-secrets/templates/service-account.yaml.tpl | kubectl apply -f -
-          sed "s/\${APP_NAME}/${APP_NAME}/g" \
-            vault-ent/pki-secrets/templates/vault-auth.yaml.tpl | kubectl apply -f -
           sed -e "s/\${APP_NAME}/${APP_NAME}/g" \
               -e "s/\${COMMON_NAME}/${COMMON_NAME}/g" \
               -e "s/\${ALT_NAME}/${ALT_NAME}/g" \
               -e "s/\${LB_NAME}/${LB_NAME}/g" \
-            vault-ent/pki-secrets/templates/pki-secret.yaml.tpl | kubectl apply -f -
-          sleep 5
+            vault-ent/pki-secrets/templates/certificate.yaml.tpl | kubectl apply -f -
+          kubectl wait certificate/pki-app-cert -n "${APP_NAME}" --for=condition=Ready --timeout=2m
           sed "s/\${APP_NAME}/${APP_NAME}/g" \
             vault-ent/pki-secrets/templates/deployment.yaml.tpl | kubectl apply -f -
         done
@@ -679,15 +695,16 @@ tasks:
       - test -f vault-init.json
     desc: Verify PKI certificates were issued for all app instances
     cmds:
-      - echo "=== One VaultAuth and service account per app namespace ==="
-      - kubectl get vaultauth -A | grep -E 'NAMESPACE|pki-app-'
+      - echo "=== Cluster-wide cert-manager issuer and the VaultAuth it logs in with ==="
+      - kubectl get vaultclusterissuer vault-pki
+      - kubectl get vaultauth pki-issuer-auth -n vault-secrets-operator
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
           APP_NAME="pki-app-${i}"
           echo ""
           echo "=== Verifying ${APP_NAME} ==="
-          echo "--- VaultPKISecret resource ---"
-          kubectl get vaultpkisecret -n "${APP_NAME}" pki-app-cert -o yaml
+          echo "--- Certificate and CertificateRequests ---"
+          kubectl get certificate,certificaterequest -n "${APP_NAME}"
           echo ""
           echo "--- Certificate issued into ${APP_NAME} ---"
           kubectl get secret -n "${APP_NAME}" pki-app-tls -o jsonpath='{.data.tls\.crt}' \
@@ -696,10 +713,10 @@ tasks:
         done
       - echo "\n=== Auth role on the kubernetes auth mount in Vault namespace tn001 ==="
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/kubernetes-auth-mount/role/pki-secret"
-      - echo "\n=== Templated policy (pki_role comes from the service account annotation) ==="
+      - echo "\n=== Templated policy (pki_role comes from the pki-issuer-sa annotation) ==="
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy read pki-secret"
-      - echo "\n=== Per-app PKI issuing roles ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault list pki/roles"
+      - echo "\n=== Shared PKI role used by the cluster issuer ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read -field=allowed_domains pki/roles/pki-cluster-issuer"
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -781,15 +798,19 @@ tasks:
         sh: cat vault-init.json | jq -r '.root_token'
 
   rotate:pki-secret:
-    desc: Rotate PKI certificates by deleting the synced TLS secrets
+    desc: Rotate PKI certificates by deleting the TLS secrets (cert-manager re-issues)
     cmds:
       - echo "Deleting synced TLS secrets to trigger VSO to issue new certificates..."
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
           kubectl delete secret pki-app-tls -n "pki-app-${i}" --ignore-not-found
         done
-      - echo "Waiting for VSO to re-issue certificates..."
-      - sleep 15
+      - echo "Waiting for cert-manager to re-issue certificates..."
+      - sleep 5
+      - |
+        for i in $(seq 1 {{ .pki_app_count }}); do
+          kubectl wait certificate/pki-app-cert -n "pki-app-${i}" --for=condition=Ready --timeout=2m
+        done
       - task: verify:pki-secret
 
   restart:csi-secret:
@@ -930,6 +951,7 @@ tasks:
     cmds:
       - task: uninstall:apps
       - task: uninstall:vso
+      - task: uninstall:cert-manager
       - sleep 3
       - task: uninstall:vault
       - sleep 3
@@ -949,6 +971,16 @@ tasks:
     desc: Uninstall Vault Secrets Operator
     cmds:
       - helm uninstall vault-secrets-operator -n vault-secrets-operator --ignore-not-found
+
+  uninstall:cert-manager:
+    desc: Uninstall cert-manager and its CRDs
+    cmds:
+      - helm uninstall cert-manager -n cert-manager --ignore-not-found
+      # crds.enabled=true keeps the CRDs on uninstall, so remove them explicitly
+      - |
+        crds=$(kubectl get crd -o name | grep -E 'cert-manager\.io$' || true)
+        if [ -n "${crds}" ]; then kubectl delete ${crds}; fi
+      - kubectl delete ns cert-manager --ignore-not-found
 
   uninstall:apps:
     desc: Uninstall k8s apps
@@ -979,9 +1011,9 @@ tasks:
           echo "Cleaning up ${APP_NAME}..."
           kubectl delete deployment --all -n "${APP_NAME}" --ignore-not-found
           kubectl delete pods --all -n "${APP_NAME}" --force --ignore-not-found
-          kubectl delete vaultpkisecret --all -n "${APP_NAME}" --ignore-not-found || true
-          kubectl delete vaultauth --all -n "${APP_NAME}" --ignore-not-found || true
+          kubectl delete certificate --all -n "${APP_NAME}" --ignore-not-found || true
         done
+      - kubectl delete -f vault-ent/pki-secrets/cluster-issuer.yaml --ignore-not-found || true
       - |
         for APP_NAME in $(jq -r '.[].name' {{ .entity_apps_file }}); do
           echo "Cleaning up ${APP_NAME}..."

@@ -10,37 +10,53 @@ long-lived is stored in Kubernetes.
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph vault["Vault Enterprise - namespace tn001"]
-    DB[("db/creds/dev-postgres")]
-    PKI[("pki/issue/example-dot-com")]
-    ROLE["auth/k8s-auth-mount<br/>role: dynamic-secret"]
+%%{init: {"flowchart": {"wrappingWidth": 300}}}%%
+flowchart TB
+  classDef app fill:#ffffff,stroke:#4b5563,stroke-width:2px,color:#111827
+  classDef vso fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+  classDef vault fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827
+  classDef out fill:#ecfdf5,stroke:#15803d,stroke-width:2px,color:#14532d
+  classDef k8s fill:#e5e7eb,stroke:#6b7280,stroke-width:2px,color:#111827
+  subgraph app["dynamic-app"]
+    VDS("<b>VaultDynamicSecret</b><br/>vso-db-demo")
+    VPS("<b>VaultPKISecret</b><br/>vso-pki-demo")
+    VA("<b>VaultAuth</b><br/>dynamic-auth")
+    SDB("<b>Secret</b><br/>vso-db-demo")
+    STLS("<b>Secret</b><br/>vso-pki-demo<br/>kubernetes.io/tls")
+    POD("<b>Pod</b><br/>dynamic-app")
+    PG[("<b>PostgreSQL</b>")]
   end
 
   subgraph vso["vault-secrets-operator"]
-    OP["VSO controller"]
+    OP("<b>VSO controller</b>")
   end
 
-  subgraph app["dynamic-app"]
-    VA["VaultAuth<br/>dynamic-auth"]
-    VDS["VaultDynamicSecret<br/>vso-db-demo"]
-    VPS["VaultPKISecret<br/>vso-pki-demo"]
-    SDB["Secret vso-db-demo"]
-    STLS["Secret vso-pki-demo<br/>kubernetes.io/tls"]
-    POD["Pod dynamic-app"]
-    PG[("PostgreSQL")]
+  subgraph vault["Vault Enterprise · namespace tn001"]
+    ROLE("<b>auth/k8s-auth-mount</b><br/>role: dynamic-secret")
+    DB[("<b>db/creds/dev-postgres</b>")]
+    PKI[("<b>pki/issue/example-dot-com</b>")]
   end
 
-  VDS -->|vaultAuthRef| VA
-  VPS -->|vaultAuthRef| VA
-  OP -->|watches| VDS
-  OP -->|watches| VPS
-  VA -->|JWT login| ROLE
-  ROLE --> DB
-  ROLE --> PKI
-  OP --> SDB --> POD
-  OP --> STLS --> POD
-  POD -->|connects with issued creds| PG
+  VDS -.->|vaultAuthRef| VA
+  VPS -.->|vaultAuthRef| VA
+  OP -->|① watches| VDS
+  OP -->|① watches| VPS
+  VA -->|② JWT login| ROLE
+  ROLE -->|③| DB
+  ROLE -->|③| PKI
+  OP -->|④| SDB --> POD
+  OP -->|④| STLS --> POD
+  POD ==>|⑤ connects with issued creds| PG
+
+  class VDS,VPS,VA,POD app
+  class OP vso
+  class ROLE,DB,PKI vault
+  class SDB,STLS,PG out
+  style app fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
+  style vso fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+  style vault fill:#f9fafb,stroke:#374151,stroke-width:2px,color:#111827
+  linkStyle 0,1 stroke:#9ca3af,stroke-dasharray:4
+  linkStyle 7,8,9,10,11 stroke:#15803d,stroke-width:2px
 ```
 
 Credentials carry a lease and are revoked when it expires; the certificate is renewed by VSO before
@@ -152,5 +168,4 @@ it lapses.
 ## Related
 
 - [Architecture overview](architecture.md)
-- [PKI example](pki-secrets.md) - per-app roles on the same `pki` mount
-- [Troubleshooting](troubleshooting.md)
+- [PKI example](pki-secrets.md) - cert-manager `VaultClusterIssuer` on the same `pki` mount

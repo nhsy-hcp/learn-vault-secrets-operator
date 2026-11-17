@@ -13,28 +13,44 @@ workload wants a config file in its own format.
 
 ```mermaid
 flowchart LR
-  subgraph vault["Vault Enterprise - namespace tn001"]
-    KV[("kvv2/webapp/config")]
-    ROLE["auth/k8s-auth-mount<br/>role: vault-agent-secret"]
-  end
-
+  classDef app fill:#ffffff,stroke:#4b5563,stroke-width:2px,color:#111827
+  classDef vso fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+  classDef vault fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827
+  classDef out fill:#ecfdf5,stroke:#15803d,stroke-width:2px,color:#14532d
+  classDef k8s fill:#e5e7eb,stroke:#6b7280,stroke-width:2px,color:#111827
   subgraph app["vault-agent-app"]
-    CM["ConfigMap<br/>vault-agent-config"]
-    SA["ServiceAccount<br/>vault-agent-sa"]
+    CM("<b>ConfigMap</b><br/>vault-agent-config")
+    SA("<b>ServiceAccount</b><br/>vault-agent-sa")
 
     subgraph pod["Pod vault-agent-app"]
-      INIT["initContainer<br/>vault-agent-init"]
-      VOL["emptyDir<br/>/vault/secrets"]
-      APP["container: app<br/>reads config.txt"]
+      INIT("<b>initContainer</b><br/>vault-agent-init")
+      VOL("<b>emptyDir</b><br/>/vault/secrets")
+      APP("<b>container: app</b><br/>reads config.txt")
     end
   end
 
-  CM -->|agent config| INIT
-  SA -->|projected JWT| INIT
-  INIT -->|JWT login| ROLE
-  ROLE --> KV
-  KV -->|template render| VOL
-  VOL --> APP
+  subgraph vault["Vault Enterprise · namespace tn001"]
+    ROLE("<b>auth/k8s-auth-mount</b><br/>role: vault-agent-secret")
+    KV[("<b>kvv2/webapp/config</b>")]
+  end
+
+  CM -.->|agent config| INIT
+  SA -.->|projected JWT| INIT
+  INIT -->|① JWT login| ROLE
+  ROLE -->|②| KV
+  KV -->|③ template render| VOL
+  VOL -->|④| APP
+
+  class CM,SA k8s
+  class INIT vso
+  class APP app
+  class ROLE,KV vault
+  class VOL out
+  style app fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
+  style pod fill:#ffffff,stroke:#ea580c,stroke-width:1px,stroke-dasharray:4,color:#9a3412
+  style vault fill:#f9fafb,stroke:#374151,stroke-width:2px,color:#111827
+  linkStyle 0,1 stroke:#9ca3af,stroke-dasharray:4
+  linkStyle 4,5 stroke:#15803d,stroke-width:2px
 ```
 
 The init container exits once the template is rendered; the app container then starts and reads the
@@ -116,4 +132,3 @@ and the init container logs to show `authentication successful` followed by
 - [Architecture overview](architecture.md)
 - [Static secrets example](static-secrets.md) - the same KV secret delivered as a `Secret`
 - [CSI secrets example](csi-secrets.md) - another no-`Secret` delivery mechanism
-- [Troubleshooting](troubleshooting.md)

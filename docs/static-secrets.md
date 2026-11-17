@@ -10,39 +10,55 @@ Vault role with a glob-matched namespace bound claim.
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph vault["Vault Enterprise - namespace tn001"]
-    KV[("kvv2/webapp/config")]
-    ROLE["auth/k8s-auth-mount<br/>role: static-secret<br/>bound ns glob: static-app-*"]
-  end
-
-  subgraph vso["vault-secrets-operator"]
-    OP["VSO controller"]
-  end
-
+flowchart TB
+  classDef app fill:#ffffff,stroke:#4b5563,stroke-width:2px,color:#111827
+  classDef vso fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+  classDef vault fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827
+  classDef out fill:#ecfdf5,stroke:#15803d,stroke-width:2px,color:#14532d
+  classDef k8s fill:#e5e7eb,stroke:#6b7280,stroke-width:2px,color:#111827
   subgraph a["static-app-1"]
-    VA1["VaultAuth<br/>static-auth"]
-    VS1["VaultStaticSecret<br/>vault-kv-app"]
-    S1["Secret<br/>secretkv"]
-    P1["Pod static-app"]
+    VS1("<b>VaultStaticSecret</b><br/>vault-kv-app")
+    VA1("<b>VaultAuth</b><br/>static-auth")
+    S1("<b>Secret</b><br/>secretkv")
+    P1("<b>Pod</b><br/>static-app")
   end
 
   subgraph b["static-app-2 / static-app-3"]
-    VAN["VaultAuth<br/>static-auth"]
-    VSN["VaultStaticSecret<br/>vault-kv-app"]
-    SN["Secret<br/>secretkv"]
-    PN["Pod static-app"]
+    VSN("<b>VaultStaticSecret</b><br/>vault-kv-app")
+    VAN("<b>VaultAuth</b><br/>static-auth")
+    SN("<b>Secret</b><br/>secretkv")
+    PN("<b>Pod</b><br/>static-app")
   end
 
-  VS1 -->|vaultAuthRef| VA1
-  VSN -->|vaultAuthRef| VAN
-  OP -->|watches| VS1
-  OP -->|watches| VSN
-  VA1 -->|JWT login| ROLE
-  VAN -->|JWT login| ROLE
-  ROLE --> KV
-  OP --> S1 --> P1
-  OP --> SN --> PN
+  subgraph vso["vault-secrets-operator"]
+    OP("<b>VSO controller</b>")
+  end
+
+  subgraph vault["Vault Enterprise · namespace tn001"]
+    ROLE("<b>auth/k8s-auth-mount</b><br/>role: static-secret<br/>bound ns glob: static-app-*")
+    KV[("<b>kvv2/webapp/config</b>")]
+  end
+
+  VS1 -.->|vaultAuthRef| VA1
+  VSN -.->|vaultAuthRef| VAN
+  OP -->|① watches| VS1
+  OP -->|① watches| VSN
+  VA1 -->|② JWT login| ROLE
+  VAN -->|② JWT login| ROLE
+  ROLE -->|③| KV
+  OP -->|④| S1 --> P1
+  OP -->|④| SN --> PN
+
+  class VS1,VA1,P1,VSN,VAN,PN app
+  class OP vso
+  class ROLE,KV vault
+  class S1,SN out
+  style a fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
+  style b fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
+  style vso fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+  style vault fill:#f9fafb,stroke:#374151,stroke-width:2px,color:#111827
+  linkStyle 0,1 stroke:#9ca3af,stroke-dasharray:4
+  linkStyle 7,8,9,10 stroke:#15803d,stroke-width:2px
 ```
 
 Each namespace gets its **own** `VaultAuth`; what is shared is the Vault role, which admits any
@@ -146,4 +162,3 @@ in `tn001`, which the [entity metadata](entity-secrets.md) and
 
 - [Architecture overview](architecture.md)
 - [Entity metadata example](entity-secrets.md) - same `kvv2` mount, one entity per app
-- [Troubleshooting](troubleshooting.md)

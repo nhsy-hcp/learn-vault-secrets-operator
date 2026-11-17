@@ -1,6 +1,7 @@
 #!/bin/bash
 # Configure the tn001 kubernetes auth mount (service account annotations become alias metadata),
-# the templated pki-secret policy and role, and one PKI issuing role per app. Safe to re-run.
+# the templated pki-secret policy and role used by the VaultClusterIssuer, and the shared PKI role
+# it signs with. Safe to re-run.
 #
 # Usage: VAULT_TOKEN=... KUBE_HOST=... scripts/config-pki-secret.sh [app_count] [max_ttl]
 set -euo pipefail
@@ -36,19 +37,22 @@ echo "Using ${AUTH_MOUNT} accessor ${accessor}"
 sed "s/__ACCESSOR__/${accessor}/g" vault-ent/pki-secrets/pki-secret.hcl | vault_cmd policy write pki-secret -
 vault_cmd write "auth/${AUTH_MOUNT}/role/pki-secret" - < vault-ent/pki-secrets/pki-secret-role.json
 
-# allowed_domains limits each role to its own app; "svc" covers the short in-cluster name
+# One shared role for the cluster issuer; allowed_domains covers every app ("svc" is the short in-cluster name)
+PKI_ROLE="pki-cluster-issuer"
+domains=""
 for i in $(seq 1 "${APP_COUNT}"); do
   app="pki-app-${i}"
-  vault_cmd write "pki/roles/${app}" \
-    allowed_domains="${app}.svc.cluster.local,${app}.svc,${app}.example.com" \
-    allow_subdomains=true \
-    allow_bare_domains=true \
-    allow_wildcard_certificates=true \
-    allow_ip_sans=false \
-    allow_localhost=false \
-    key_type=rsa \
-    key_bits=2048 \
-    ttl=1h \
-    max_ttl="${MAX_TTL}" >/dev/null
-  echo "Wrote pki/roles/${app}"
+  domains="${domains:+${domains},}${app}.svc.cluster.local,${app}.svc,${app}.example.com"
 done
+vault_cmd write "pki/roles/${PKI_ROLE}" \
+  allowed_domains="${domains}" \
+  allow_subdomains=true \
+  allow_bare_domains=true \
+  allow_wildcard_certificates=true \
+  allow_ip_sans=false \
+  allow_localhost=false \
+  key_type=rsa \
+  key_bits=2048 \
+  ttl=1h \
+  max_ttl="${MAX_TTL}" >/dev/null
+echo "Wrote pki/roles/${PKI_ROLE} (allowed_domains=${domains})"

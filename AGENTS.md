@@ -28,7 +28,7 @@ vault-ent/
 - `vault-ent/static-secrets/` - Static secret manifests and templates
 - `vault-ent/dynamic-secrets/` - Dynamic secret manifests
 - `vault-ent/csi-secrets/` - CSI driver configuration and policies
-- `vault-ent/pki-secrets/` - PKI certificate manifests and templates (per-app annotated service accounts)
+- `vault-ent/pki-secrets/` - PKI cluster issuer (`cluster-issuer.yaml`) and cert-manager `Certificate` templates
 - `vault-ent/entity-secrets/` - Entity metadata manifests, templates and `apps.json` catalogue
 - `scripts/` - Helper scripts invoked from the Taskfile
 - `vault-ent/vault-agent-secrets/` - Vault Agent sidecar demo (optional)
@@ -38,7 +38,7 @@ vault-ent/
 - `docs/` - Documentation, including one walkthrough per example:
   `static-secrets.md`, `dynamic-secrets.md`, `csi-secrets.md`, `pki-secrets.md`,
   `entity-secrets.md`, `vault-agent-secrets.md`, plus system-level `architecture.md` and
-  `cloud-deployment.md` (EKS/GKE) and `troubleshooting.md` (public copy of the Troubleshooting section below)
+  `cloud-deployment.md` (EKS/GKE); troubleshooting lives only in the Troubleshooting section below
 
 ## Workflows
 
@@ -99,6 +99,7 @@ vault-ent/
 3. Verify pods & namespaces have been deleted:
    - vault
    - vault-secrets-operator
+   - cert-manager
    - csi-app
    - static-app-1, static-app-2, static-app-3
    - dynamic-app
@@ -120,12 +121,13 @@ Runs the complete tutorial: prerequisites, k3d cluster (`task cluster:up`), `tas
 - `task cluster:down` - Delete the k3d cluster
 
 ### Core Setup Tasks
-- `task install` - Install and configure Vault and VSO on existing cluster
+- `task install` - Install and configure Vault, cert-manager and VSO on existing cluster
 - `task install:vault` - Install Vault using Helm
 - `task init:vault` - Initialize Vault and save keys to vault-init.json
 - `task unseal:vault` - Unseal Vault using saved keys
 - `task config:vault` - Configure Vault with namespaces and JWT token reviewer service account
 - `task config:vso:encrypted-cache` - Configure Vault transit engine for VSO encrypted client cache
+- `task install:cert-manager` - Install cert-manager (jetstack chart, `cert_manager_version`)
 - `task install:vso` - Install Vault Secrets Operator with CSI enabled
 
 ### Deployment Tasks
@@ -135,8 +137,8 @@ Runs the complete tutorial: prerequisites, k3d cluster (`task cluster:up`), `tas
 - `task config:dynamic-secret` - Configure Vault for dynamic database secrets and PKI in tn001 namespace
 - `task deploy:dynamic-secret` - Deploy dynamic secret resources with PostgreSQL database and PKI certificates
 - `task deploy:csi-secret` - Deploy CSI demo application with CSI driver integration
-- `task config:pki-secret` - Create the `pki-app-*` namespaces, the `kubernetes-auth-mount` kubernetes auth mount, templated policy/role and per-app PKI roles (via `scripts/config-pki-secret.sh`)
-- `task deploy:pki-secret` - Deploy PKI certificate resources for all app instances using templates
+- `task config:pki-secret` - Create the `pki-app-*` namespaces, the `kubernetes-auth-mount` kubernetes auth mount, templated policy/role and the shared `pki-cluster-issuer` PKI role (via `scripts/config-pki-secret.sh`), then apply the `VaultClusterIssuer`
+- `task deploy:pki-secret` - Deploy cert-manager `Certificate`s and apps for all PKI instances using templates
 - `task config:entity-secret` - Create the `entity-app-*` namespaces, seed per-team KV secrets, write the templated policy and role, and pre-create identity entities from `apps.json` (via `scripts/config-entity-secret.sh`)
 - `task deploy:entity-secret` - Deploy entity metadata resources for every app in `apps.json`
 
@@ -145,7 +147,7 @@ Runs the complete tutorial: prerequisites, k3d cluster (`task cluster:up`), `tas
 - `task verify:static-secret` - Verify static secret synchronization across all app instances
 - `task verify:dynamic-secret` - Verify dynamic database and PKI certificate synchronization
 - `task verify:csi-secret` - Verify CSI secrets and display application logs
-- `task verify:pki-secret` - Verify PKI certificates were issued for all app instances
+- `task verify:pki-secret` - Verify the cluster issuer and that certificates were issued for all app instances
 - `task verify:entity-secret` - Verify entity metadata/aliases and per-team secret sync
 - `task verify:pods` - Check all pod status across namespaces
 
@@ -166,14 +168,15 @@ Not chained into `task secrets` or `task all` - run these explicitly. Requires
 - `task rotate:static-secret` - Rotate static secret values in Vault and verify synchronization
 - `task rotate:dynamic-secret` - Rotate dynamic database secret by revoking leases and restarting deployment
 - `task rotate:csi:secret` - Rotate CSI secret values in Vault
-- `task rotate:pki-secret` - Rotate PKI certificates by deleting the synced TLS secrets (reuses VSO's cached
-  Vault token, so it does not pick up changed SA annotations)
+- `task rotate:pki-secret` - Rotate PKI certificates by deleting the TLS secrets; cert-manager re-issues (the issuer
+  reuses VSO's cached Vault token, so it does not pick up changed SA annotations)
 
 ### Cleanup Tasks
 - `task clean` - Delete the k3d cluster (`task cluster:down`) and vault-init.json
 - `task uninstall` - Complete uninstall of VSO and Vault
 - `task uninstall:vault` - Remove Vault installation
 - `task uninstall:vso` - Remove VSO installation
+- `task uninstall:cert-manager` - Remove cert-manager and its CRDs
 - `task uninstall:apps` - Remove all application deployments and resources
 - `task clean:namespaces` - Delete the `vault` and `vault-secrets-operator` namespaces
 - `task eks:destroy:auto` - Destroy EKS cluster (automated)
@@ -227,6 +230,8 @@ kubectl get pods -n vault-agent-app   # only if the optional demo is deployed
 kubectl get vaultauth -A
 kubectl get vaultstaticsecret -A
 kubectl get vaultpkisecret -A
+kubectl get vaultclusterissuer
+kubectl get certificate,certificaterequest -A
 
 # Inspect an issued PKI certificate
 kubectl get secret pki-app-tls -n pki-app-1 -o jsonpath='{.data.tls\.crt}' \
@@ -257,7 +262,7 @@ The project uses a `.env` file for sensitive configuration:
   `task config:static-secret` and used by every example app except PKI
 - `tn001` namespace: `kubernetes-auth-mount` is a `kubernetes` auth mount (token reviewer `vault-token-reviewer`,
   `use_annotations_as_alias_metadata=true`, ClusterRole `vault-sa-reader` from `vault-ent/vault-sa-reader-rbac.yaml`);
-  created by `task config:pki-secret` and used by the PKI example
+  created by `task config:pki-secret` and used by the PKI example's `VaultClusterIssuer`
 
 ### Static Secrets (Multiple Instances)
 - Namespace: `tn001`
@@ -283,18 +288,22 @@ The project uses a `.env` file for sensitive configuration:
 
 ### PKI Secrets
 - Namespace: `tn001`
+- Delivery: cert-manager `Certificate` `pki-app-cert` per `pki-app-*` namespace → `VaultClusterIssuer/vault-pki`
+  (VSO 2.0+) → Secret `pki-app-tls`; `certManager.approverRBAC.enabled=true` in the VSO values auto-approves requests
 - PKI mount: `pki` (shared with dynamic secrets, which uses the `example-dot-com` role)
-- Issuing roles: `pki-app-N`, one per app, `allowed_domains` limited to that app's names
-- Auth role: `pki-secret` (kubernetes role, SA names `pki-app-*-sa`, namespaces `pki-app-*`,
+- Signing role: `pki-cluster-issuer`, one shared role whose `allowed_domains` covers every `pki-app-N` name
+- Auth role: `pki-secret` (kubernetes role, SA `pki-issuer-sa`, namespace `vault-secrets-operator`,
   `alias_name_source=serviceaccount_name`)
-- Policy: `pki-secret` - templated `pki/issue/{{identity.entity.aliases.<accessor>.metadata.pki_role}}`
-  (accessor substituted at config time; issuance only, no revoke)
-- Service account: `<ns>-sa` with `vault.hashicorp.com/alias-metadata-*` annotations `pki_role`, `application_name`,
-  `namespace` (= `<ns>`), `team: platform`, `business_unit: shared-services`
+- Policy: `pki-secret` - templated `pki/sign/{{identity.entity.aliases.<accessor>.metadata.pki_role}}`
+  (accessor substituted at config time; no issue/revoke) plus read on `sys/license/status` (issuer Enterprise check)
+- Service account: `pki-issuer-sa` in `vault-secrets-operator` with `vault.hashicorp.com/alias-metadata-*` annotations
+  `pki_role: pki-cluster-issuer`, `application_name`, `namespace`, `team: platform`, `business_unit: shared-services`
 - Auth mount: `kubernetes-auth-mount` (kubernetes); no entities are pre-created
-- VaultAuth: `pki-auth` per `pki-app-*` namespace (`method: kubernetes`)
-- Script: `scripts/config-pki-secret.sh` (auth mount + config, templated policy, role, `pki/roles/pki-app-N`)
-- Deployment: Template-based deployment from `vault-ent/pki-secrets/templates/`
+- VaultAuth: `pki-issuer-auth` in `vault-secrets-operator` (`method: kubernetes`), referenced by the cluster issuer;
+  needs `vaultConnectionRef: default` (operator namespace) and `allowedNamespaces: ["*"]` (no glob support)
+- Manifests: `vault-ent/pki-secrets/cluster-issuer.yaml` (SA, VaultAuth, VaultClusterIssuer) and
+  `templates/certificate.yaml.tpl`, `templates/deployment.yaml.tpl`
+- Script: `scripts/config-pki-secret.sh` (auth mount + config, templated policy, role, `pki/roles/pki-cluster-issuer`)
 - Instance count: Configurable via `pki_app_count` variable (default: 3)
 
 ### Entity Metadata Secrets
@@ -371,18 +380,23 @@ The project uses a `.env` file for sensitive configuration:
 4. Check synced secrets in each namespace: `kubectl get secret secretkv -n static-app-1`
 
 ### PKI Issues
-1. Check certificate sync status: `kubectl get vaultpkisecret -A`
-2. `403 permission denied` on issue - the SA's `alias-metadata-pki_role` annotation is missing or does not
-   match the `VaultPKISecret` `role`; after fixing, re-create `VaultAuth/pki-auth` to force a fresh login
-   (metadata is only refreshed at login)
+1. Check issuance status: `kubectl get vaultclusterissuer vault-pki` and `kubectl get certificate,certificaterequest -A`;
+   `kubectl describe certificaterequest -n pki-app-N` shows approval and Vault errors
+2. `403 permission denied` on sign - the `pki-issuer-sa` `alias-metadata-pki_role` annotation is missing or does not
+   match the `VaultClusterIssuer` `role`; after fixing, re-create `VaultAuth/pki-issuer-auth` in
+   `vault-secrets-operator` to force a fresh login (metadata is only refreshed at login)
 3. Login fails reading the service account - `vault-ent/vault-sa-reader-rbac.yaml` is not applied
-4. `service account name/namespace not authorized` - SA must be `pki-app-*-sa` in a `pki-app-*` namespace
+4. `service account name/namespace not authorized` - the issuer SA must be `pki-issuer-sa` in `vault-secrets-operator`
    (`vault read auth/kubernetes-auth-mount/role/pki-secret`)
 5. `common name ... not allowed by this role` - name is outside `allowed_domains` on
-   `pki/roles/pki-app-N`; note `<name>.<ns>.svc` is a subdomain of `svc`, not `svc.cluster.local`
-6. Pod stuck in `ContainerCreating` - it mounts `pki-app-tls`, which does not exist until the
-   certificate is issued; fix the sync error and the pod recovers
-7. Certificates no longer chain to the CA - the `pki` mount was re-created (e.g. by
+   `pki/roles/pki-cluster-issuer`; note `<name>.<ns>.svc` is a subdomain of `svc`, not `svc.cluster.local`
+   (the CertificateRequest only says `Vault signing failed`)
+6. Issuer not Ready with `VaultEnterpriseCheckForbidden` - the policy lacks `sys/license/status` read
+7. CertificateRequest `target namespace ... is not allowed by kind=VaultAuth` - `pki-issuer-auth` is missing
+   `allowedNamespaces`; `vaultConnectionRef must be set` - it is missing `vaultConnectionRef`
+8. Pod stuck in `ContainerCreating` - it mounts `pki-app-tls`, which does not exist until the
+   certificate is issued; fix the issuance error and the pod recovers
+9. Certificates no longer chain to the CA - the `pki` mount was re-created (e.g. by
    `task uninstall:apps`) with a new root CA; run `task rotate:pki-secret` to re-issue
 
 ### Entity Metadata Issues
@@ -420,14 +434,17 @@ The project uses a `.env` file for sensitive configuration:
   `scripts/config-pki-secret.sh`.
 
 ### PKI Architecture
-- **Separate kubernetes auth mount**: JWT auth cannot read ServiceAccount annotations, so PKI uses
-  `kubernetes-auth-mount` with `use_annotations_as_alias_metadata=true`. Vault reads each SA (hence the
+- **cert-manager external issuer**: apps create cert-manager `Certificate`s; VSO 2.0's `VaultClusterIssuer` signs
+  their CSRs with Vault. cert-manager owns the key, the Secret and renewal (`renewBefore: 15m`).
+- **Shared issuer trade-off**: the issuer is cluster-scoped with one Vault identity and one PKI role, so any
+  namespace can request any `pki-app-*` name. Per-namespace isolation would need a namespaced `VaultIssuer`.
+- **Separate kubernetes auth mount**: JWT auth cannot read ServiceAccount annotations, so the issuer uses
+  `kubernetes-auth-mount` with `use_annotations_as_alias_metadata=true`. Vault reads the SA (hence the
   `vault-sa-reader` ClusterRole) and copies `vault.hashicorp.com/alias-metadata-<key>` annotations into alias metadata.
-- **Templated policy**: `pki_role` metadata picks the issuing role, so each app can only use its own
-  `pki/roles/pki-app-N`, whose `allowed_domains` cover only that app's names.
+- **Templated policy**: `pki_role` metadata picks the signing role (`pki/roles/pki-cluster-issuer`).
 - **No pre-created entities**: unlike the entity demo, metadata comes from annotations at login. Anyone
-  who can edit SAs in a `pki-app-*` namespace can change it.
-- **Issuance only**: the policy omits `pki/revoke`, so `VaultPKISecret` does not set `revoke: true`.
+  who can edit SAs in `vault-secrets-operator` can change it.
+- **No revoke**: the policy omits `pki/revoke`.
 
 ### Static Secrets Architecture
 The static secrets implementation supports multiple application instances using:
@@ -453,8 +470,10 @@ The static secrets implementation supports multiple application instances using:
 - Dynamic secrets include both database credentials (PostgreSQL) and PKI certificates (TLS)
 - The `static_app_count` variable controls the number of static app instances (default: 3)
 - The `pki_app_count` variable controls the number of PKI app instances (default: 3)
-- The PKI demo derives Vault alias metadata from ServiceAccount annotations (kubernetes auth), whereas the
-  entity demo pre-creates entities (JWT auth); both use the same metadata keys
+- The PKI demo derives Vault alias metadata from the issuer ServiceAccount's annotations (kubernetes auth), whereas
+  the entity demo pre-creates entities (JWT auth); both use the same metadata keys
+- The PKI demo uses cert-manager (installed by `task install`) with the VSO `VaultClusterIssuer`; the dynamic
+  secrets demo still uses `VaultPKISecret`
 - `pki-app-3` requests a wildcard certificate; all instances also carry a `pki-app-N.example.com` SAN so one
   Secret could serve both the pod and a load balancer
 - The entity metadata demo pre-creates Vault entities because Kubernetes tokens do not carry
@@ -463,7 +482,7 @@ The static secrets implementation supports multiple application instances using:
   (auto-created `entity_*` entities, `kvv2/teams/*` secrets and the `entity-secret` policy remain)
 - Vault client counts take at least 10 minutes to generate after startup; an empty or zero count
   before then is expected, not a sign that entity or auth configuration failed
-- SA annotation metadata is only read at login; after changing an annotation, re-create `VaultAuth/pki-auth`
-  to force VSO to re-authenticate
+- SA annotation metadata is only read at login; after changing an annotation, re-create
+  `VaultAuth/pki-issuer-auth` to force VSO to re-authenticate
 - `task uninstall:apps` disables `kubernetes-auth-mount` and deletes the `vault-sa-reader` RBAC
 - The Vault Agent demo is optional and excluded from `task secrets` / `task all`

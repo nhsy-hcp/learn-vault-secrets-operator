@@ -1,0 +1,44 @@
+---
+# Identity the VaultClusterIssuer logs in as; annotations become Vault alias metadata
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pki-issuer-sa
+  namespace: vault-secrets-operator
+  annotations:
+    vault.hashicorp.com/alias-metadata-pki_role: pki-cluster-issuer
+    vault.hashicorp.com/alias-metadata-application_name: pki-cluster-issuer
+    vault.hashicorp.com/alias-metadata-namespace: vault-secrets-operator
+    vault.hashicorp.com/alias-metadata-team: platform
+    vault.hashicorp.com/alias-metadata-business_unit: shared-services
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: pki-issuer-auth
+  namespace: vault-secrets-operator
+spec:
+  # required for resources in the operator namespace (VSO 2.0)
+  vaultConnectionRef: default
+  # the cluster issuer signs for Certificates in any namespace; exact names or "*" only (no globs)
+  allowedNamespaces:
+    - "*"
+  method: kubernetes
+  mount: kubernetes-auth-mount
+  namespace: tn001
+  kubernetes:
+    role: pki-secret
+    serviceAccount: pki-issuer-sa
+    audiences:
+      - vault
+---
+# cert-manager external issuer: signs Certificates from any namespace with pki/roles/pki-cluster-issuer
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultClusterIssuer
+metadata:
+  name: vault-pki
+spec:
+  vaultAuthRef: vault-secrets-operator/pki-issuer-auth
+  namespace: tn001
+  mount: pki
+  role: pki-cluster-issuer
