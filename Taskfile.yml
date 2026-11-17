@@ -377,7 +377,7 @@ tasks:
             ttl=87600h"
         fi
       - kubectl apply -f vault-ent/vault-sa-reader-rbac.yaml
-      # kubernetes auth mount, templated policy/role and one issuing role per app
+      # kubernetes auth mount, templated policy/role and the shared pki-cluster-issuer role
       - ./scripts/config-pki-secret.sh {{ .pki_app_count }} {{ .pki_max_ttl }}
       # issuer service account, VaultAuth and the cluster-wide cert-manager issuer
       - kubectl apply -f vault-ent/pki-secrets/cluster-issuer.yaml
@@ -432,6 +432,8 @@ tasks:
   install:cert-manager:
     desc: Install cert-manager (signs PKI lab certificates via the VSO VaultClusterIssuer)
     cmds:
+      # self-contained: install is also run without prerequisites (k3d, EKS and GKE workflows)
+      - helm repo add jetstack https://charts.jetstack.io --force-update
       - |
         helm upgrade --install cert-manager jetstack/cert-manager \
           -n cert-manager \
@@ -800,15 +802,16 @@ tasks:
   rotate:pki-secret:
     desc: Rotate PKI certificates by deleting the TLS secrets (cert-manager re-issues)
     cmds:
-      - echo "Deleting synced TLS secrets to trigger VSO to issue new certificates..."
+      - echo "Deleting TLS secrets to trigger cert-manager to issue new certificates..."
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
           kubectl delete secret pki-app-tls -n "pki-app-${i}" --ignore-not-found
         done
       - echo "Waiting for cert-manager to re-issue certificates..."
-      - sleep 5
+      # wait for the Secret itself: the Certificate can still report a stale Ready=True right after the delete
       - |
         for i in $(seq 1 {{ .pki_app_count }}); do
+          kubectl wait secret/pki-app-tls -n "pki-app-${i}" --for=create --timeout=2m
           kubectl wait certificate/pki-app-cert -n "pki-app-${i}" --for=condition=Ready --timeout=2m
         done
       - task: verify:pki-secret
@@ -1013,7 +1016,8 @@ tasks:
           kubectl delete pods --all -n "${APP_NAME}" --force --ignore-not-found
           kubectl delete certificate --all -n "${APP_NAME}" --ignore-not-found || true
         done
-      - kubectl delete -f vault-ent/pki-secrets/cluster-issuer.yaml --ignore-not-found || true
+      # timeout: the VaultAuth finalizer blocks forever if VSO is not running
+      - kubectl delete -f vault-ent/pki-secrets/cluster-issuer.yaml --ignore-not-found --timeout=60s || true
       - |
         for APP_NAME in $(jq -r '.[].name' {{ .entity_apps_file }}); do
           echo "Cleaning up ${APP_NAME}..."
