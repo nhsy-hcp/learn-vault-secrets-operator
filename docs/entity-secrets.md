@@ -15,52 +15,70 @@ the `team` metadata in a templated policy so each app reads only its own team's 
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph onboard["Onboarding - task config:entity-secret"]
-    CAT["apps.json"]
-    SCRIPT["config-entity-secret.sh"]
-  end
-
-  subgraph vault["Vault Enterprise - namespace tn001"]
-    ENT["Entity entity-app-N<br/>metadata: application_name,<br/>team, business_unit, namespace"]
-    ALIAS["Entity alias<br/>entity-app-N-sa"]
-    ROLE["auth/k8s-auth-mount<br/>role: entity-secret<br/>user_claim: SA name"]
-    POL["policy: entity-secret<br/>kvv2/data/teams/{{identity.entity.metadata.team}}/*"]
-    KV[("kvv2/teams/payments/config<br/>kvv2/teams/risk/config")]
-  end
-
-  subgraph vso["vault-secrets-operator"]
-    OP["VSO controller"]
+flowchart TB
+  classDef app fill:#ffffff,stroke:#4b5563,stroke-width:2px,color:#111827
+  classDef vso fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+  classDef vault fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827
+  classDef out fill:#ecfdf5,stroke:#15803d,stroke-width:2px,color:#14532d
+  classDef k8s fill:#e5e7eb,stroke:#6b7280,stroke-width:2px,color:#111827
+  subgraph onboard["Onboarding · task config:entity-secret"]
+    CAT("<b>apps.json</b>")
+    SCRIPT("<b>config-entity-secret.sh</b>")
   end
 
   subgraph a["entity-app-1"]
-    SA1["ServiceAccount<br/>entity-app-1-sa"]
-    VA1["VaultAuth entity-auth"]
-    VS1["VaultStaticSecret<br/>vault-kv-app"]
-    S1["Secret secretkv"]
-    P1["Deployment entity-app"]
+    SA1("<b>ServiceAccount</b><br/>entity-app-1-sa")
+    VS1("<b>VaultStaticSecret</b><br/>vault-kv-app")
+    VA1("<b>VaultAuth</b><br/>entity-auth")
+    S1("<b>Secret</b><br/>secretkv")
+    P1("<b>Deployment</b><br/>entity-app")
   end
 
   subgraph b["entity-app-2 / entity-app-3"]
-    SAN["ServiceAccount<br/>entity-app-N-sa"]
-    VAN["VaultAuth entity-auth"]
-    VSN["VaultStaticSecret<br/>vault-kv-app"]
-    SN["Secret secretkv"]
-    PN["Deployment entity-app"]
+    SAN("<b>ServiceAccount</b><br/>entity-app-N-sa")
+    VSN("<b>VaultStaticSecret</b><br/>vault-kv-app")
+    VAN("<b>VaultAuth</b><br/>entity-auth")
+    SN("<b>Secret</b><br/>secretkv")
+    PN("<b>Deployment</b><br/>entity-app")
+  end
+
+  subgraph vso["vault-secrets-operator"]
+    OP("<b>VSO controller</b>")
+  end
+
+  subgraph vault["Vault Enterprise · namespace tn001"]
+    ROLE("<b>auth/k8s-auth-mount</b><br/>role: entity-secret<br/>user_claim: SA name")
+    ALIAS("<b>Entity alias</b><br/>entity-app-N-sa")
+    ENT("<b>Entity entity-app-N</b><br/>metadata: application_name,<br/>team, business_unit, namespace")
+    POL("<b>policy: entity-secret</b><br/>kvv2/data/teams/{{identity.entity.metadata.team}}/*")
+    KV[("<b>kvv2/teams/payments/config</b><br/>kvv2/teams/risk/config")]
   end
 
   CAT --> SCRIPT --> ENT
   SCRIPT --> ALIAS --> ENT
-  VS1 -->|vaultAuthRef| VA1
-  VSN -->|vaultAuthRef| VAN
-  OP -->|TokenRequest| SA1
-  OP -->|TokenRequest| SAN
-  VA1 -->|JWT login| ROLE
-  VAN -->|JWT login| ROLE
-  ROLE --> ALIAS
-  ENT --> POL --> KV
-  OP --> S1 --> P1
-  OP --> SN --> PN
+  VS1 -.->|vaultAuthRef| VA1
+  VSN -.->|vaultAuthRef| VAN
+  OP -->|① TokenRequest| SA1
+  OP -->|① TokenRequest| SAN
+  VA1 -->|② JWT login| ROLE
+  VAN -->|② JWT login| ROLE
+  ROLE -->|③| ALIAS
+  ENT -->|④| POL --> KV
+  OP -->|⑤| S1 --> P1
+  OP -->|⑤| SN --> PN
+
+  class VS1,VA1,P1,VSN,VAN,PN app
+  class SA1,SAN,CAT,SCRIPT k8s
+  class OP vso
+  class ROLE,ALIAS,ENT,POL,KV vault
+  class S1,SN out
+  style onboard fill:#fefce8,stroke:#d97706,stroke-width:2px,color:#92400e
+  style a fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
+  style b fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
+  style vso fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+  style vault fill:#f9fafb,stroke:#374151,stroke-width:2px,color:#111827
+  linkStyle 4,5 stroke:#9ca3af,stroke-dasharray:4
+  linkStyle 13,14,15,16 stroke:#15803d,stroke-width:2px
 ```
 
 `task config:entity-secret` creates the app namespaces, seeds one KV secret per team, writes the
@@ -208,4 +226,3 @@ task verify:entity-secret     # entity-app-3 syncs team risk again
 - [Architecture overview](architecture.md)
 - [Static secrets example](static-secrets.md) - same `kvv2` mount, one shared alias
 - [PKI example](pki-secrets.md) - the same metadata keys, set from ServiceAccount annotations instead of pre-created entities
-- [Troubleshooting](troubleshooting.md)

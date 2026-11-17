@@ -21,3 +21,9 @@ controller:
 
 csi:
   enabled: true
+
+# Lets cert-manager's built-in approver approve CertificateRequests for the
+# VaultClusterIssuer (PKI lab); issuance is still bounded by the Vault PKI role
+certManager:
+  approverRBAC:
+    enabled: true

@@ -3,33 +3,32 @@
 How Vault Enterprise, the Vault Secrets Operator (VSO) and the demo applications fit together.
 Each example has its own walkthrough - see [Examples](#examples).
 
-![Architecture Diagram](images/diagram.png)
-
 ## High-level view
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                          Kubernetes Cluster                          │
-│                                                                      │
-│  ┌──────────────────┐        ┌──────────────────────────────────┐    │
-│  │ Vault Enterprise │◄───────┤ Vault Secrets Operator (VSO)     │    │
-│  │ (vault ns)       │        │ (vault-secrets-operator ns)      │    │
-│  │  namespaces:     │        │  - watches VSO custom resources  │    │
-│  │  - vso           │        │  - logs in with app SA tokens    │    │
-│  │  - tn001         │        │  - syncs Secrets / CSI volumes   │    │
-│  └──────────────────┘        └──────────────────────────────────┘    │
-│           ▲                                  │                       │
-│           │ Vault Agent (direct login)       ▼                       │
-│  ┌────────┴─────────────────────────────────────────────────────┐    │
-│  │ Application namespaces                                       │    │
-│  │  static-app-*   VaultAuth + VaultStaticSecret                │    │
-│  │  dynamic-app    VaultAuth + VaultDynamicSecret/VaultPKISecret│    │
-│  │  csi-app        VaultAuth + CSISecrets (CSI volume)          │    │
-│  │  pki-app-*      VaultAuth + VaultPKISecret (kubernetes auth) │    │
-│  │  entity-app-*   VaultAuth + VaultStaticSecret                │    │
-│  │  vault-agent-app  Vault Agent init container (optional)      │    │
-│  └──────────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
+flowchart TB
+  classDef app fill:#ffffff,stroke:#4b5563,stroke-width:2px,color:#111827
+  classDef vso fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
+  classDef vault fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827
+  classDef out fill:#ecfdf5,stroke:#15803d,stroke-width:2px,color:#14532d
+  classDef k8s fill:#e5e7eb,stroke:#6b7280,stroke-width:2px,color:#111827
+  subgraph k8s["Kubernetes cluster"]
+    V("<b>Vault Enterprise</b><br/>vault ns<br/>namespaces: vso, tn001")
+    VSO("<b>Vault Secrets Operator (VSO)</b><br/>vault-secrets-operator ns<br/>watches VSO custom resources<br/>logs in with app SA tokens<br/>syncs Secrets / CSI volumes")
+    APPS("<b>Application namespaces</b><br/>static-app-* · VaultAuth + VaultStaticSecret<br/>dynamic-app · VaultAuth + VaultDynamicSecret/VaultPKISecret<br/>csi-app · VaultAuth + CSISecrets (CSI volume)<br/>pki-app-* · cert-manager Certificate → VaultClusterIssuer<br/>entity-app-* · VaultAuth + VaultStaticSecret<br/>vault-agent-app · Vault Agent init container (optional)")
+  end
+
+  VSO -->|log in, read / issue| V
+  VSO -->|sync Secrets / CSI volumes| APPS
+  APPS -.->|"Vault Agent (direct login)"| V
+
+  class APPS app
+  class VSO vso
+  class V vault
+  style k8s fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
+  linkStyle 1 stroke:#15803d,stroke-width:2px
+  linkStyle 2 stroke:#9ca3af,stroke-dasharray:4
 ```
 
 ## Vault
@@ -39,10 +38,10 @@ Each example has its own walkthrough - see [Examples](#examples).
 | `vso` | `k8s-auth-mount` | kubernetes (token reviewer) | VSO controller (role `auth-role-operator`) |
 | `vso` | `vso-transit` | transit, key `vso-client-cache` | VSO encrypted client cache |
 | `tn001` | `k8s-auth-mount` | jwt (OIDC discovery) | every demo application except PKI |
-| `tn001` | `kubernetes-auth-mount` | kubernetes, SA annotations as alias metadata | PKI |
+| `tn001` | `kubernetes-auth-mount` | kubernetes, SA annotations as alias metadata | PKI (`VaultClusterIssuer`) |
 | `tn001` | `kvv2` | kv-v2 | static, CSI, entity, Vault Agent |
 | `tn001` | `db` | database, role `dev-postgres` | dynamic |
-| `tn001` | `pki` | pki, roles `example-dot-com` and `pki-app-N` | dynamic, PKI |
+| `tn001` | `pki` | pki, roles `example-dot-com` and `pki-cluster-issuer` | dynamic, PKI |
 
 KV v2 paths in `tn001`:
 
@@ -69,11 +68,12 @@ write Kubernetes Secret (or CSI volume) → update status → cache (encrypted) 
 | Namespace | Service account | Purpose |
 |---|---|---|
 | `vault` | `vault` | Vault server and Vault CSI provider; `vault` SA is the token reviewer for the `vso` mount |
-| `vault-secrets-operator` | `vault-secrets-operator-controller-manager` | VSO controller |
+| `vault-secrets-operator` | `vault-secrets-operator-controller-manager`, `pki-issuer-sa` | VSO controller; PKI cluster issuer identity (annotated) |
+| `cert-manager` | `cert-manager` | cert-manager (signs PKI lab certificates via VSO) |
 | `static-app-1..3` | `static-app-sa` (same name in each) | Static secrets |
 | `dynamic-app` | `dynamic-app-sa` | Dynamic database credentials and TLS |
 | `csi-app` | `csi-app-sa` | CSI secrets |
-| `pki-app-1..3` | `pki-app-N-sa` (unique, annotated with metadata) | PKI certificates |
+| `pki-app-1..3` | `default` | PKI certificates (cert-manager `Certificate`) |
 | `entity-app-1..3` | `entity-app-N-sa` (unique per namespace) | Entity metadata |
 | `vault-agent-app` | `vault-agent-sa` | Vault Agent sidecar (optional) |
 
@@ -114,10 +114,11 @@ signature, issuer and bound claims → issues a Vault token with the role's poli
 
 Each example has its own Vault role and policy in `tn001`, but isolation differs by design:
 
-- **Static, PKI, entity**: one role serves several namespaces through globs
-  (`static-app-*`, `pki-app-*`, `entity-app-*`).
-- **PKI**: logs in to the separate kubernetes auth mount `kubernetes-auth-mount`, where SA annotations
-  become alias metadata. A templated policy restricts each app to its own `pki/roles/pki-app-N`.
+- **Static, entity**: one role serves several namespaces through globs
+  (`static-app-*`, `entity-app-*`).
+- **PKI**: the `VaultClusterIssuer` logs in as `vault-secrets-operator/pki-issuer-sa` to the separate
+  kubernetes auth mount `kubernetes-auth-mount`, where SA annotations become alias metadata. A templated policy
+  restricts it to `pki/roles/pki-cluster-issuer`.
 - **Entity metadata**: each namespace has a unique SA name, mapped to a pre-created entity whose
   metadata attributes usage for chargeback; the templated policy also scopes reads to the entity's
   `team`.
@@ -132,7 +133,7 @@ Role and policy details are in each example's walkthrough.
 | Static secrets | `VaultStaticSecret` → Kubernetes `Secret` | `vault-ent/static-secrets/` | [static-secrets.md](static-secrets.md) |
 | Dynamic secrets | `VaultDynamicSecret` / `VaultPKISecret` → `Secret`, leased | `vault-ent/dynamic-secrets/` | [dynamic-secrets.md](dynamic-secrets.md) |
 | CSI secrets | `CSISecrets` → pod CSI volume, no `Secret` | `vault-ent/csi-secrets/` | [csi-secrets.md](csi-secrets.md) |
-| PKI | SA annotation metadata + templated policy → `kubernetes.io/tls` `Secret` per namespace | `vault-ent/pki-secrets/` | [pki-secrets.md](pki-secrets.md) |
+| PKI | cert-manager `Certificate` → `VaultClusterIssuer` (annotated SA + templated policy) → `kubernetes.io/tls` `Secret` per namespace | `vault-ent/pki-secrets/` | [pki-secrets.md](pki-secrets.md) |
 | Entity metadata | Pre-created entity + templated policy → `Secret` per namespace | `vault-ent/entity-secrets/` | [entity-secrets.md](entity-secrets.md) |
 | Vault Agent (optional) | Agent init container → rendered file, no `Secret` | `vault-ent/vault-agent-secrets/` | [vault-agent-secrets.md](vault-agent-secrets.md) |
 
