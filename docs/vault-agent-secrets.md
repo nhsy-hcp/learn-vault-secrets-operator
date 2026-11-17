@@ -115,13 +115,13 @@ first to create both `k8s-auth-mount` and the KV data.
 task verify:vault-agent-secret
 ```
 
-Expect the app container to print the rendered file:
+Expect the app container to print the rendered file, with the password masked:
 
 ```
-Contents of /vault/secrets/config.txt:
+Contents of /vault/secrets/config.txt (password masked):
 
 USERNAME=static-user
-PASSWORD=static-password
+PASSWORD=<hidden>
 ```
 
 and the init container logs to show `authentication successful` followed by

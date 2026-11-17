@@ -632,16 +632,13 @@ tasks:
           echo "=== Verifying VaultStaticSecret resource ==="
           kubectl get vaultstaticsecret -n "${APP_NAME}" vault-kv-app -o yaml
           echo ""
-          echo "=== Verifying Kubernetes secret created by VSO ==="
-          kubectl get secret -n "${APP_NAME}" secretkv -o yaml
-          echo ""
-          echo "=== Decoding secret values ==="
+          echo "=== Verifying Kubernetes secret created by VSO (key lengths only, values hidden) ==="
+          kubectl get secret -n "${APP_NAME}" secretkv -o json | jq '{name: .metadata.name, type, key_lengths: (.data // {} | map_values(@base64d | length)), owner: [.metadata.ownerReferences[]?.kind]}'
           echo "Username: $(kubectl get secrets -n ${APP_NAME} secretkv -o jsonpath='{.data.username}' | base64 -d)"
-          echo "Password: $(kubectl get secrets -n ${APP_NAME} secretkv -o jsonpath='{.data.password}' | base64 -d)"
           echo ""
         done
-      - echo "=== Verifying source secret in Vault namespace tn001 ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv get kvv2/webapp/config"
+      - echo "=== Verifying source secret in Vault namespace tn001 (metadata only) ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv metadata get kvv2/webapp/config"
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -652,18 +649,24 @@ tasks:
     cmds:
       - echo "=== Verifying VaultDynamicSecret resource ==="
       - kubectl get vaultdynamicsecret -n dynamic-app vso-db-demo -o yaml
-      - echo "\n=== Verifying Kubernetes secret created by VSO ==="
-      - kubectl get secret -n dynamic-app vso-db-demo -o yaml
-      - echo "\n=== Decoding secret values ==="
+      - echo "\n=== Verifying Kubernetes secret created by VSO (key lengths only, values hidden) ==="
+      # standalone existence checks: the jq pipes below would not fail on a missing Secret
+      - kubectl get secret -n dynamic-app vso-db-demo -o name
       - |
+        kubectl get secret -n dynamic-app vso-db-demo -o json | jq '{name: .metadata.name, type, key_lengths: (.data // {} | map_values(@base64d | length)), owner: [.metadata.ownerReferences[]?.kind]}'
         echo "Username: $(kubectl get secrets -n dynamic-app vso-db-demo -o jsonpath='{.data.username}' | base64 -d)"
-        echo "Password: $(kubectl get secrets -n dynamic-app vso-db-demo -o jsonpath='{.data.password}' | base64 -d)"
-      - echo "\n=== Verifying dynamic database secret backend in Vault namespace tn001 ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read db/creds/dev-postgres"
+      # read the role, not db/creds: reading creds would mint (and print) an extra database user
+      - echo "\n=== Verifying dynamic database role in Vault namespace tn001 ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read db/roles/dev-postgres"
+      # end-to-end proof: the app connected to PostgreSQL with the synced credentials (password is masked in its logs)
+      - echo "\n=== Database connection test from the app pod ==="
+      - kubectl logs -n dynamic-app -l app=dynamic-app --tail=200 | grep -m1 "Database Connection Successful"
       - echo "\n=== Verifying VaultPKISecret resource ==="
       - kubectl get vaultpkisecret -n dynamic-app vso-pki-demo -o yaml
-      - echo "\n=== Verifying PKI TLS secret created by VSO ==="
-      - kubectl get secret -n dynamic-app vso-pki-demo -o yaml
+      - echo "\n=== Verifying PKI TLS secret created by VSO (key lengths only, private key hidden) ==="
+      - kubectl get secret -n dynamic-app vso-pki-demo -o name
+      - |
+        kubectl get secret -n dynamic-app vso-pki-demo -o json | jq '{name: .metadata.name, type, key_lengths: (.data // {} | map_values(@base64d | length)), owner: [.metadata.ownerReferences[]?.kind]}'
       - echo "\n=== Decoding PKI certificate details ==="
       - |
         echo "Certificate:"
@@ -683,9 +686,9 @@ tasks:
       - kubectl get csisecrets -n csi-app csi-demo -o yaml
       - echo "\n=== Application logs from pod csi-app/$POD ==="
       - kubectl logs -n csi-app $POD --tail=50
-      - echo "\n=== Verifying source secrets in Vault namespace tn001 ==="
+      - echo "\n=== Verifying source secrets in Vault namespace tn001 (metadata only) ==="
       - echo "\n--- KV Secret (kvv2/db-creds) ---"
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv get kvv2/db-creds"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv metadata get kvv2/db-creds"
     env:
       POD:
         sh: kubectl get pod -l app=csi-app -o jsonpath="{.items[0].metadata.name}" -n csi-app
@@ -735,7 +738,7 @@ tasks:
             | jq '.data | {name, metadata, aliases: [.aliases[] | {name, metadata}]}'
           echo "=== VaultStaticSecret status ==="
           kubectl get vaultstaticsecret -n "${APP_NAME}" vault-kv-app
-          echo "=== Decoding secret values ==="
+          echo "=== Decoded non-sensitive values ==="
           echo "Team: $(kubectl get secrets -n ${APP_NAME} secretkv -o jsonpath='{.data.team}' | base64 -d)"
           echo "Username: $(kubectl get secrets -n ${APP_NAME} secretkv -o jsonpath='{.data.username}' | base64 -d)"
           echo ""
