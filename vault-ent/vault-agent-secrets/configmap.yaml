@@ -16,7 +16,7 @@ data:
 
     auto_auth {
       method "jwt" {
-        mount_path = "auth/k8s-auth-mount"
+        mount_path = "auth/jwt"
         config = {
           role = "vault-agent-secret"
           path = "/var/run/secrets/jwt-token"
@@ -46,7 +46,7 @@ data:
 
     auto_auth {
       method "jwt" {
-        mount_path = "auth/k8s-auth-mount"
+        mount_path = "auth/jwt"
         config = {
           role = "vault-agent-secret"
           path = "/var/run/secrets/jwt-token"

@@ -21,8 +21,8 @@ anything that can't mount the volume can't read the data.
 - **Declares the secret:** `kvv2/db-creds`, authenticated through `VaultAuth/csi-auth`.
 - **Restricts which pods may mount it:** `accessControl` checks the service account (`csi-app-sa`),
   the namespace (`csi-app`) and the pod name (`^csi-app-*`).
-- **Renders the files:** every raw key is excluded, and templates produce `dbUsername` and
-  `dbPassword`.
+- **Renders the files:** every raw key is excluded, and templates `dbUsername` and `dbPassword`
+  become files `static_secret_0_dbUsername` and `static_secret_0_dbPassword`.
 
 ## Vault configuration
 
@@ -31,7 +31,7 @@ anything that can't mount the volume can't read the data.
 - Policy: `csi-secret`
 - Bound service account / namespace: `csi-app-sa` / `csi-app`
 - Audience: `vault`; token period: 1 hour
-- Permissions: read `kvv2/data/db-creds`
+- Permissions: read `kvv2/data/db-creds` and `sys/license/status`
 
 ## Synchronisation flow
 
@@ -39,9 +39,9 @@ anything that can't mount the volume can't read the data.
    deployment.
 2. The kubelet mounts the pod's CSI volume. Its `volumeAttributes` name `csi-demo` in `csi-app`.
 3. The VSO CSI driver checks the pod against `accessControl`, then logs in to Vault as
-   `csi-app-sa` via `k8s-auth-mount`.
-4. The driver reads `kvv2/db-creds`, renders the templates and writes `dbUsername` and
-   `dbPassword` to a tmpfs volume mounted at `/secrets/static`.
+   `csi-app-sa` via the `jwt` auth mount.
+4. The driver reads `kvv2/db-creds`, renders the templates and writes `static_secret_0_dbUsername`
+   and `static_secret_0_dbPassword` to a tmpfs volume mounted at `/secrets/static`.
 5. After `task rotate:csi:secret`, run `task restart:csi-secret` so new pods mount the new values.
 
 ## Related

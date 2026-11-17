@@ -14,7 +14,7 @@ Vault role with a glob-matched namespace bound claim.
 Each namespace gets its **own** `VaultAuth`; what is shared is the Vault role, which admits any
 namespace matching `static-app-*`.
 
-`task config:static-secret` also creates the `kvv2` mount and the `k8s-auth-mount` JWT auth mount
+`task config:static-secret` also creates the `kvv2` mount and the `jwt` auth mount
 in `tn001`, which the [entity metadata](entity-secrets.md) and
 [Vault Agent](vault-agent-secrets.md) examples depend on - run it first.
 
@@ -27,8 +27,8 @@ in `tn001`, which the [entity metadata](entity-secrets.md) and
 - Bound namespaces: `static-app-*` (glob pattern)
 - Token TTL: 1 hour
 - Permissions:
-  - Read: `kvv2/data/webapp/config`
-  - List: `kvv2/metadata/webapp/config`
+  - Read/List/Subscribe (`kv*` events): `kvv2/data/webapp/config`
+  - Read: `sys/events/subscribe/kv*` (for `instantUpdates`)
 
 ## Synchronisation flow
 
@@ -51,7 +51,7 @@ in `tn001`, which the [entity metadata](entity-secrets.md) and
 ┌─────────────────────────────────────────────────────────────┐
 │  3. VSO authenticates to Vault                              │
 │     - Uses app service account token                        │
-│     - Authenticates via k8s-auth-mount                      │
+│     - Authenticates via the jwt auth mount                  │
 │     - Receives Vault token with static-secret policy        │
 └─────────────────────────────────────────────────────────────┘
                           │

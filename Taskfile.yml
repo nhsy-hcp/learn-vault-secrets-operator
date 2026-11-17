@@ -43,6 +43,7 @@ tasks:
       - task: secrets
 
   install:
+    desc: Install and configure Vault, cert-manager and VSO on the current cluster
     cmds:
       - task: install:vault
       - task: init:vault
@@ -52,6 +53,7 @@ tasks:
       - task: install:vso
 
   secrets:
+    desc: Configure, deploy and verify all example secret types
     cmds:
       - task: config:static-secret
       - task: deploy:static-secret
@@ -70,6 +72,7 @@ tasks:
       - task: verify:entity-secret
 
   verify:
+    desc: Run all verification tasks
     cmds:
       - task: verify:pods
       - task: verify:static-secret
@@ -223,11 +226,11 @@ tasks:
   # ============================================================================
 
   config:vault:
-    desc: Configure Vault with Kubernetes auth and secrets
+    desc: Enable the stdout audit device, create Vault namespaces, token reviewer SA and OIDC discovery binding
     preconditions:
       - test -f vault-init.json
     cmds:
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault audit enable -path='audit_stdout' file file_path=stdout" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault audit enable -path='stdout' file file_path=stdout" || true
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault namespace create vso" || true
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault namespace create tn001" || true
       - kubectl apply -f vault-ent/vault-jwt-service-account.yaml
@@ -244,18 +247,18 @@ tasks:
   config:vso:encrypted-cache:
     desc: Configure Vault transit engine for VSO encrypted client cache in vso namespace
     cmds:
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault auth enable -path k8s-auth-mount kubernetes" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault auth enable -path kubernetes kubernetes" || true
       - |
         TOKEN_REVIEWER_JWT=$(kubectl get secret vault-token-secret -n vault -o json | jq -r .data.token | base64 --decode)
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault write auth/k8s-auth-mount/config \
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault write auth/kubernetes/config \
           kubernetes_host=\"https://$KUBE_HOST:443\" \
           token_reviewer_jwt=\"$TOKEN_REVIEWER_JWT\""
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault secrets enable -path=vso-transit transit" || true
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault write -f vso-transit/keys/vso-client-cache"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault secrets enable -path=transit transit" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault write -f transit/keys/vso-client-cache"
       - kubectl cp vault-ent/vso-transit-policy.hcl vault-0:/tmp/vso-transit-policy.hcl -n vault
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault policy write vso-transit /tmp/vso-transit-policy.hcl"
       - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault write auth/k8s-auth-mount/role/auth-role-operator \
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=vso vault write auth/kubernetes/role/auth-role-operator \
           alias_name_source=serviceaccount_name \
           bound_service_account_names=vault-secrets-operator-controller-manager \
           bound_service_account_namespaces=vault-secrets-operator \
@@ -270,28 +273,29 @@ tasks:
     silent: true
 
   config:static-secret:
+    desc: Configure the tn001 kvv2 mount, jwt auth mount and static secret role
     cmds:
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable -path=kvv2 kv-v2" || true
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault kv put kvv2/webapp/config username=\"static-user\" password=\"static-password\""
       - kubectl cp vault-ent/static-secrets/static-secret.hcl vault-0:/tmp/static-secret.hcl -n vault
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write static-secret /tmp/static-secret.hcl"
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth enable -path k8s-auth-mount jwt" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth enable -path jwt jwt" || true
       - |
         export ISSUER=$(kubectl get --raw /.well-known/openid-configuration | jq -r '.issuer')
         if kubectl config current-context | grep -q '^k3d-'; then
           echo "Detected k3d cluster - using kubernetes service account CA"
-          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/jwt/config \
             oidc_discovery_url=\"$ISSUER\" \
             oidc_discovery_ca_pem=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
             bound_issuer=\"$ISSUER\""
         else
           echo "Detected non-k3d cluster (EKS/GKE/etc) - using system CA bundle for public OIDC endpoint"
-          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/config \
+          kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/jwt/config \
             oidc_discovery_url=\"$ISSUER\" \
             bound_issuer=\"$ISSUER\""
         fi
       - kubectl cp vault-ent/static-secrets/static-secret-role.json vault-0:/tmp/static-secret-role.json -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/static-secret @/tmp/static-secret-role.json"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/jwt/role/static-secret @/tmp/static-secret-role.json"
       - |
         for i in $(seq 1 {{ .static_app_count }}); do
           kubectl create ns "static-app-${i}" || true
@@ -308,7 +312,7 @@ tasks:
     desc: Configure Vault for dynamic database secrets and PKI in tn001 namespace
     cmds:
       - kubectl create ns dynamic-app || true
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable -path=db database || echo 'Database secrets engine already enabled'"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable -path=database database || echo 'Database secrets engine already enabled'"
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets enable pki || echo 'PKI already enabled'"
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets tune -max-lease-ttl=87600h pki"
       # The pki mount is shared with config:pki-secret, so only seed the root CA if absent
@@ -333,7 +337,7 @@ tasks:
       - kubectl cp vault-ent/dynamic-secrets/dynamic-secret.hcl vault-0:/tmp/dynamic-secret.hcl -n vault
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write dynamic-secret /tmp/dynamic-secret.hcl"
       - kubectl cp vault-ent/dynamic-secrets/dynamic-secret-role.json vault-0:/tmp/dynamic-secret-role.json -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/dynamic-secret @/tmp/dynamic-secret-role.json"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/jwt/role/dynamic-secret @/tmp/dynamic-secret-role.json"
     env:
       KUBE_HOST:
         sh: kubectl exec vault-0 -n vault -- printenv KUBERNETES_PORT_443_TCP_ADDR
@@ -350,7 +354,7 @@ tasks:
       - kubectl cp vault-ent/csi-secrets/csi-secret.hcl vault-0:/tmp/csi-secret.hcl -n vault
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write csi-secret /tmp/csi-secret.hcl"
       - kubectl cp vault-ent/csi-secrets/csi-secret-role.json vault-0:/tmp/csi-secret-role.json -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/csi-secret @/tmp/csi-secret-role.json"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/jwt/role/csi-secret @/tmp/csi-secret-role.json"
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -405,7 +409,7 @@ tasks:
       - kubectl cp vault-ent/entity-secrets/entity-secret.hcl vault-0:/tmp/entity-secret.hcl -n vault
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write entity-secret /tmp/entity-secret.hcl"
       - kubectl cp vault-ent/entity-secrets/entity-secret-role.json vault-0:/tmp/entity-secret-role.json -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/entity-secret @/tmp/entity-secret-role.json"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/jwt/role/entity-secret @/tmp/entity-secret-role.json"
       - ./scripts/config-entity-secret.sh {{ .entity_apps_file }}
     env:
       VAULT_TOKEN:
@@ -420,7 +424,7 @@ tasks:
       - kubectl cp vault-ent/vault-agent-secrets/vault-agent-secret.hcl vault-0:/tmp/vault-agent-secret.hcl -n vault
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy write vault-agent-secret /tmp/vault-agent-secret.hcl"
       - kubectl cp vault-ent/vault-agent-secrets/vault-agent-secret-role.json vault-0:/tmp/vault-agent-secret-role.json -n vault
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/k8s-auth-mount/role/vault-agent-secret @/tmp/vault-agent-secret-role.json"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write auth/jwt/role/vault-agent-secret @/tmp/vault-agent-secret-role.json"
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -513,14 +517,14 @@ tasks:
       - sleep 3
       - kubectl wait --for=condition=ready pod --all -n dynamic-app --timeout=5m
       - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write db/config/dev-postgres \
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write database/config/dev-postgres \
           plugin_name=postgresql-database-plugin \
           connection_url='postgresql://{{`{{username}}`}}:{{`{{password}}`}}@postgres.dynamic-app.svc.cluster.local:5432/postgres?sslmode=disable' \
           allowed_roles='dev-postgres' \
           username='postgres' \
           password='secret-pass'"
       - |
-        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write db/roles/dev-postgres \
+        kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault write database/roles/dev-postgres \
           db_name=dev-postgres \
           creation_statements=\"CREATE ROLE \\\"{{`{{name}}`}}\\\" WITH LOGIN PASSWORD '{{`{{password}}`}}' VALID UNTIL '{{`{{expiration}}`}}'; GRANT SELECT ON ALL TABLES IN SCHEMA public TO \\\"{{`{{name}}`}}\\\";\" \
           max_ttl={{ .postgresql_max_ttl }}"
@@ -655,9 +659,9 @@ tasks:
       - |
         kubectl get secret -n dynamic-app vso-db-demo -o json | jq '{name: .metadata.name, type, key_lengths: (.data // {} | map_values(@base64d | length)), owner: [.metadata.ownerReferences[]?.kind]}'
         echo "Username: $(kubectl get secrets -n dynamic-app vso-db-demo -o jsonpath='{.data.username}' | base64 -d)"
-      # read the role, not db/creds: reading creds would mint (and print) an extra database user
+      # read the role, not database/creds: reading creds would mint (and print) an extra database user
       - echo "\n=== Verifying dynamic database role in Vault namespace tn001 ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read db/roles/dev-postgres"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read database/roles/dev-postgres"
       # end-to-end proof: the app connected to PostgreSQL with the synced credentials (password is masked in its logs)
       - echo "\n=== Database connection test from the app pod ==="
       - kubectl logs -n dynamic-app -l app=dynamic-app --tail=200 | grep -m1 "Database Connection Successful"
@@ -717,7 +721,7 @@ tasks:
             | openssl x509 -noout -subject -issuer -enddate -ext subjectAltName
         done
       - echo "\n=== Auth role on the kubernetes auth mount in Vault namespace tn001 ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/kubernetes-auth-mount/role/pki-secret"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault read auth/kubernetes/role/pki-secret"
       - echo "\n=== Templated policy (pki_role comes from the pki-issuer-sa annotation) ==="
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault policy read pki-secret"
       - echo "\n=== Shared PKI role used by the cluster issuer ==="
@@ -777,7 +781,7 @@ tasks:
     desc: Rotate the dynamic database secret by revoking leases and restarting the deployment
     cmds:
       - echo "Revoking all database leases for dev-postgres role..."
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault lease revoke -prefix db/creds/dev-postgres"
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault lease revoke -prefix database/creds/dev-postgres"
       - echo "Deleting Kubernetes secret to trigger VSO to fetch new credentials..."
       - kubectl delete secret vso-db-demo -n dynamic-app --ignore-not-found
       - echo "Waiting for VSO to recreate the secret with new credentials..."
@@ -902,14 +906,14 @@ tasks:
   list:k8s-auth:
     preconditions:
       - test -f vault-init.json
-    desc: Display all Kubernetes auth entities
+    desc: Display tn001 auth mounts and the jwt auth roles and config
     cmds:
-      - echo "=== Kubernetes Auth Methods ==="
+      - echo "=== Auth Methods (tn001) ==="
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault auth list -namespace=tn001"
-      - echo "\n=== Kubernetes Auth Roles (k8s-auth-mount) ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault list -namespace=tn001 auth/k8s-auth-mount/role"
-      - echo "\n=== Kubernetes Auth Config (k8s-auth-mount) ==="
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault read -namespace=tn001 auth/k8s-auth-mount/config"
+      - echo "\n=== JWT Auth Roles (jwt) ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault list -namespace=tn001 auth/jwt/role"
+      - echo "\n=== JWT Auth Config (jwt) ==="
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN vault read -namespace=tn001 auth/jwt/config"
     env:
       VAULT_TOKEN:
         sh: cat vault-init.json | jq -r '.root_token'
@@ -952,10 +956,12 @@ tasks:
       - kubectl get events
 
   token:
+    desc: Copy the Vault root token to the clipboard
     cmds:
       - jq -r '.root_token' vault-init.json | pbcopy
 
   ui:
+    desc: Copy the root token and open the Vault UI
     cmds:
       - task: token
       - open $VAULT_ADDR
@@ -965,6 +971,7 @@ tasks:
   # ============================================================================
 
   uninstall:
+    desc: Uninstall the apps, cert-manager, VSO and Vault
     cmds:
       - task: uninstall:apps
       - task: uninstall:vso
@@ -1061,10 +1068,10 @@ tasks:
       - kubectl delete ns dynamic-app --ignore-not-found
       - kubectl delete ns csi-app --ignore-not-found
       - kubectl delete ns vault-agent-app --ignore-not-found
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable k8s-auth-mount" || true
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable kubernetes-auth-mount" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable jwt" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault auth disable kubernetes" || true
       - kubectl delete -f vault-ent/vault-sa-reader-rbac.yaml --ignore-not-found
-      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable db" || true
+      - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable database" || true
       - kubectl exec vault-0 -n vault -- sh -c "VAULT_TOKEN=$VAULT_TOKEN VAULT_NAMESPACE=tn001 vault secrets disable pki" || true
     env:
       VAULT_TOKEN:

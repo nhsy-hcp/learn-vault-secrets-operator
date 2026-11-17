@@ -23,7 +23,7 @@ with diagram("static-secrets", direction="LR"):
         apps.append((vss, auth, sec, pod))
 
     with vault_ns():
-        role = icon(Vault, "auth/k8s-auth-mount", "role: static-secret\nbound ns glob: static-app-*", group="vault")
+        role = icon(Vault, "auth/jwt", "role: static-secret\nbound ns glob: static-app-*", group="vault")
         kv = box("kvv2/webapp/config", "KV v2", group="vault")
 
     same_rank(*[a[0] for a in apps], *[a[2] for a in apps])

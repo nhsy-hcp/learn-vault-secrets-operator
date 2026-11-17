@@ -24,7 +24,7 @@ spec:
   allowedNamespaces:
     - "*"
   method: kubernetes
-  mount: kubernetes-auth-mount
+  mount: kubernetes
   namespace: tn001
   kubernetes:
     role: pki-secret

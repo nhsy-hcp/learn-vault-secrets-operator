@@ -1,5 +1,5 @@
 ---
-# Lets Vault read service account annotations for kubernetes-auth-mount alias metadata
+# Lets Vault read service account annotations for the tn001 kubernetes auth mount alias metadata
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

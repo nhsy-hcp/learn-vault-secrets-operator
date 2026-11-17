@@ -81,7 +81,7 @@ tasks:
       - terraform init -upgrade
 
   all:
-    desc: run full terraform cycle (init, validate, format, plan)
+    desc: run full terraform cycle (format, init, validate, apply, credentials)
     cmds:
       - task: format
       - task: init

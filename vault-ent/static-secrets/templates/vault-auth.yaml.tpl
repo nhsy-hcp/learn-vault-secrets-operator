@@ -5,7 +5,7 @@ metadata:
   namespace: ${APP_NAME}
 spec:
   method: jwt
-  mount: k8s-auth-mount
+  mount: jwt
   namespace: tn001
   jwt:
     role: static-secret

@@ -54,22 +54,19 @@ vault-ent/
 1. Switch to project root directory
 2. Run `task eks:all` and wait 3 minutes (25mins+ to complete)
 3. Verify eks-hcp eks cluster is in *ACTIVE* state with AWS CLI
-4. Wait for pods to stabilize and in *Running* status
-5. Inspect pods logs for any errors
+4. Continue with install workflow
 
 ### EKS Destroy workflow
 1. Switch to project root directory
 2. Run `task eks:destroy:auto` (20mins+ to complete)
 3. Wait 3 minutes for asynchronous deletions to complete
 4. Verify eks-hcp eks cluster has been destroyed with AWS CLI
-5. Continue with install deployment workflow
 
 ### GKE Deployment workflow
 1. Switch to project root directory
 2. Run `task gke:all` and wait 3 minutes (20mins+ to complete)
 3. Verify the GKE cluster (`vault-<suffix>`, see `terraform -chdir=gke output -raw gke_cluster_name`) is in *RUNNING* state with Google Cloud CLI
-4. Wait for pods to stabilize and in *Running* status
-5. Inspect pods logs for any errors
+4. Continue with install workflow
 
 ### GKE Destroy workflow
 1. Switch to project root directory
@@ -87,7 +84,7 @@ vault-ent/
 2. Run `task clean`
 
 ### Install workflow
-1. Run `task install` (Vault and VSO only), then `task secrets` (deploys and verifies the example apps)
+1. Run `task install` (Vault, cert-manager and VSO), then `task secrets` (deploys and verifies the example apps)
 2. Wait for pods to stabilize and in *Running* status
 3. Inspect pods logs for any errors
 4. Verify secrets are mounted successfully in pod logs (static: /secrets/static, dynamic: /secrets/dynamic/db and /secrets/dynamic/tls, csi: /secrets/static, pki: /etc/tls, entity: /secrets/entity)
@@ -122,11 +119,13 @@ Runs the complete tutorial: prerequisites, k3d cluster (`task cluster:up`), `tas
 - `task cluster:down` - Delete the k3d cluster
 
 ### Core Setup Tasks
+- `task prerequisites` - Check that the core CLI tools are installed
 - `task install` - Install and configure Vault, cert-manager and VSO on existing cluster
 - `task install:vault` - Install Vault using Helm
 - `task init:vault` - Initialize Vault and save keys to vault-init.json
 - `task unseal:vault` - Unseal Vault using saved keys
-- `task config:vault` - Configure Vault with namespaces and JWT token reviewer service account
+- `task config:vault` - Enable the root `stdout` audit device, create the `vso`/`tn001` namespaces, the token reviewer
+  service account and the OIDC discovery ClusterRoleBinding
 - `task config:vso:encrypted-cache` - Configure Vault transit engine for VSO encrypted client cache
 - `task install:cert-manager` - Install cert-manager (jetstack chart, `cert_manager_version`)
 - `task install:vso` - Install Vault Secrets Operator with CSI enabled
@@ -138,7 +137,7 @@ Runs the complete tutorial: prerequisites, k3d cluster (`task cluster:up`), `tas
 - `task config:dynamic-secret` - Configure Vault for dynamic database secrets and PKI in tn001 namespace
 - `task deploy:dynamic-secret` - Deploy dynamic secret resources with PostgreSQL database and PKI certificates
 - `task deploy:csi-secret` - Deploy CSI demo application with CSI driver integration
-- `task config:pki-secret` - Create the `pki-app-*` namespaces, the `kubernetes-auth-mount` kubernetes auth mount, templated policy/role and the shared `pki-cluster-issuer` PKI role (via `scripts/config-pki-secret.sh`), then apply the `VaultClusterIssuer`
+- `task config:pki-secret` - Create the `pki-app-*` namespaces, the `kubernetes` auth mount, templated policy/role and the shared `pki-cluster-issuer` PKI role (via `scripts/config-pki-secret.sh`), then apply the `VaultClusterIssuer`
 - `task deploy:pki-secret` - Deploy cert-manager `Certificate`s and apps for all PKI instances using templates
 - `task config:entity-secret` - Create the `entity-app-*` namespaces, seed per-team KV secrets, write the templated policy and role, and pre-create identity entities from `apps.json` (via `scripts/config-entity-secret.sh`)
 - `task deploy:entity-secret` - Deploy entity metadata resources for every app in `apps.json`
@@ -158,7 +157,7 @@ Runs the complete tutorial: prerequisites, k3d cluster (`task cluster:up`), `tas
 
 ### Vault Agent Tasks (Optional)
 Not chained into `task secrets` or `task all` - run these explicitly. Requires
-`task config:static-secret` to have created `k8s-auth-mount` and `kvv2/webapp/config`.
+`task config:static-secret` to have created the `jwt` auth mount and `kvv2/webapp/config`.
 
 - `task config:vault-agent-secret` - Configure Vault policy and auth role for the Vault Agent demo
 - `task deploy:vault-agent-secret` - Deploy the Vault Agent sidecar demo application
@@ -174,7 +173,7 @@ Not chained into `task secrets` or `task all` - run these explicitly. Requires
 
 ### Cleanup Tasks
 - `task clean` - Delete the k3d cluster (`task cluster:down`) and vault-init.json
-- `task uninstall` - Complete uninstall of VSO and Vault
+- `task uninstall` - Complete uninstall of the apps, cert-manager, VSO and Vault
 - `task uninstall:vault` - Remove Vault installation
 - `task uninstall:vso` - Remove VSO installation
 - `task uninstall:cert-manager` - Remove cert-manager and its CRDs
@@ -185,6 +184,7 @@ Not chained into `task secrets` or `task all` - run these explicitly. Requires
 
 ### Code Quality Tasks
 - `task lint` - Run pre-commit hooks on all files
+- `task test:ci` - CI pipeline (lint only; e2e needs a live cluster)
 - `task lint:eks` - Run tflint on EKS Terraform configuration
 - `task lint:gke` - Run tflint on GKE Terraform configuration
 - `task docs:diagrams` - Render `docs/diagrams/*.py` to `docs/images/*.png` (needs uv and Graphviz)
@@ -194,8 +194,8 @@ Not chained into `task secrets` or `task all` - run these explicitly. Requires
 - `task logs` - Follow Vault logs
 - `task logs:vso` - Follow VSO logs
 - `task port-forward` - Port forward Vault to localhost:8200 (EKS/GKE; on k3d Vault is already on localhost:8200 via NodePort 30820)
-- `task list:k8s-auth` - Display the tn001 `k8s-auth-mount` (JWT) roles and config; for PKI use
-  `vault read auth/kubernetes-auth-mount/role/pki-secret` or `task verify:pki-secret`
+- `task list:k8s-auth` - Display the tn001 `jwt` auth roles and config; for PKI use
+  `vault read auth/kubernetes/role/pki-secret` or `task verify:pki-secret`
 - `task list:identity-entities` - Display identity entities with detailed information
 - `task events` - Display Kubernetes events
 - `task token` - Copy root token to clipboard
@@ -257,12 +257,12 @@ The project uses a `.env` file for sensitive configuration:
 ## Vault Configuration Details
 
 ### Auth Mounts
-- `vso` namespace: `k8s-auth-mount` is a `kubernetes` auth mount using the token reviewer JWT from
+- `vso` namespace: `kubernetes` is a kubernetes auth mount using the token reviewer JWT from
   service account `vault-token-reviewer` in `vault` (secret `vault-token-secret`, ClusterRoleBinding `vault-reviewer-binding`)
-- `tn001` namespace: `k8s-auth-mount` is a `jwt` auth mount validating service account tokens via the
+- `tn001` namespace: `jwt` is a JWT auth mount validating service account tokens via the
   cluster's OIDC discovery endpoint (ClusterRoleBinding `oidc-discovery-public`); created by
   `task config:static-secret` and used by every example app except PKI
-- `tn001` namespace: `kubernetes-auth-mount` is a `kubernetes` auth mount (token reviewer `vault-token-reviewer`,
+- `tn001` namespace: `kubernetes` is a kubernetes auth mount (token reviewer `vault-token-reviewer`,
   `use_annotations_as_alias_metadata=true`, ClusterRole `vault-sa-reader` from `vault-ent/vault-sa-reader-rbac.yaml`);
   created by `task config:pki-secret` and used by the PKI example's `VaultClusterIssuer`
 
@@ -272,21 +272,21 @@ The project uses a `.env` file for sensitive configuration:
 - Path: `kvv2/webapp/config`
 - Auth role: `static-secret` (uses glob pattern `static-app-*` for multiple instances)
 - Service account: `static-app-sa` (in namespaces `static-app-1`, `static-app-2`, `static-app-3`)
-- Auth mount: `k8s-auth-mount`
+- Auth mount: `jwt`
 - Deployment: Template-based deployment from `vault-ent/static-secrets/templates/`
 - Instance count: Configurable via `static_app_count` variable (default: 3)
 
 ### Dynamic Secrets
 - Namespace: `tn001`
-- Database mount: `db`
+- Database mount: `database`
 - Database path: `creds/dev-postgres`
-- PKI mount: `pki` (shared with the PKI demo, which adds the `pki-app-N` roles)
+- PKI mount: `pki` (shared with the PKI demo, which adds the `pki-cluster-issuer` role)
 - PKI role: `example-dot-com`
 - Root CA: seeded only when `pki/cert/ca` is absent, so `config:dynamic-secret` and
   `config:pki-secret` converge on the same CA in either order and can be re-run safely
 - Auth role: `dynamic-secret`
 - Service account: `dynamic-app-sa` in `dynamic-app` namespace
-- Auth mount: `k8s-auth-mount`
+- Auth mount: `jwt`
 
 ### PKI Secrets
 - Namespace: `tn001`
@@ -300,7 +300,7 @@ The project uses a `.env` file for sensitive configuration:
   (accessor substituted at config time; no issue/revoke) plus read on `sys/license/status` (issuer Enterprise check)
 - Service account: `pki-issuer-sa` in `vault-secrets-operator` with `vault.hashicorp.com/alias-metadata-*` annotations
   `pki_role: pki-cluster-issuer`, `application_name`, `namespace`, `team: platform`, `business_unit: shared-services`
-- Auth mount: `kubernetes-auth-mount` (kubernetes); no entities are pre-created
+- Auth mount: `kubernetes` (kubernetes auth); no entities are pre-created
 - VaultAuth: `pki-issuer-auth` in `vault-secrets-operator` (`method: kubernetes`), referenced by the cluster issuer;
   needs `vaultConnectionRef: default` (operator namespace) and `allowedNamespaces: ["*"]` (no glob support)
 - Manifests: `vault-ent/pki-secrets/cluster-issuer.yaml` (SA, VaultAuth, VaultClusterIssuer) and
@@ -316,13 +316,13 @@ The project uses a `.env` file for sensitive configuration:
 - Policy: `entity-secret` - templated on `{{identity.entity.metadata.team}}`, plus `subscribe` / `sys/events/subscribe/kv*`
   for the `VaultStaticSecret`'s `instantUpdates`
 - Service account: `<ns>-sa`, unique per namespace (`entity-app-1-sa`, `entity-app-2-sa`, `entity-app-3-sa`)
-- Auth mount: `k8s-auth-mount`
+- Auth mount: `jwt`
 - Entities: pre-created by `scripts/config-entity-secret.sh` with `application_name`, `team`, `business_unit`, `namespace`
   metadata; alias `<ns>-sa`
 - Catalogue: `vault-ent/entity-secrets/apps.json` (payments-api and payments-portal: payments/retail; risk-engine: risk/corporate),
   set by the `entity_apps_file` variable; one app instance per entry
 - Metadata keys use lowercase snake_case, which is safe in policy templates
-- Depends on `task config:static-secret` having created `k8s-auth-mount` and `kvv2`
+- Depends on `task config:static-secret` having created the `jwt` auth mount and `kvv2`
 
 ### Vault Agent Sidecar (Optional)
 - Namespace: `tn001`
@@ -330,25 +330,25 @@ The project uses a `.env` file for sensitive configuration:
 - Auth role: `vault-agent-secret`
 - Policy: `vault-agent-secret` (read only)
 - Service account: `vault-agent-sa` in `vault-agent-app` namespace
-- Auth mount: `k8s-auth-mount`
+- Auth mount: `jwt`
 - Delivery: Vault Agent init container renders `/vault/secrets/config.txt` - no VSO CRs involved
-- **Not** chained into `task secrets` or `task all`; run the three tasks explicitly
-- Depends on `task config:static-secret` having created `k8s-auth-mount` and `kvv2/webapp/config`
+- **Not** chained into `task secrets` or `task all`; run the config, deploy and verify tasks explicitly
+- Depends on `task config:static-secret` having created the `jwt` auth mount and `kvv2/webapp/config`
 
 ### CSI Driver Integration
 - Namespace: `tn001`
 - KV secrets: `kvv2/db-creds`
 - Auth role: `csi-secret`
 - Service account: `csi-app-sa` in `csi-app` namespace
-- Auth mount: `k8s-auth-mount` (same JWT mount as static/dynamic)
+- Auth mount: `jwt` (same JWT mount as static/dynamic)
 
 ### Encrypted Client Cache
 - Namespace: `vso`
-- Transit engine: `vso-transit`
+- Transit engine: `transit`
 - Key: `vso-client-cache`
 - Auth role: `auth-role-operator`
 - Service account: `vault-secrets-operator-controller-manager` in `vault-secrets-operator` namespace
-- Auth mount: `k8s-auth-mount`
+- Auth mount: `kubernetes`
 
 ## Troubleshooting
 
@@ -376,7 +376,7 @@ The project uses a `.env` file for sensitive configuration:
 4. Verify secret sync: `kubectl describe vaultstaticsecret -n static-app-1`
 
 ### Static Secrets Issues
-1. Verify all static app instances are running: `kubectl get pods -n static-app-1 -n static-app-2 -n static-app-3`
+1. Verify all static app instances are running: `kubectl get pods -A -l app=static-app`
 2. Check VaultStaticSecret resources in each namespace: `kubectl get vaultstaticsecret -A`
 3. Verify glob pattern matching in Vault role: `task list:k8s-auth`
 4. Check synced secrets in each namespace: `kubectl get secret secretkv -n static-app-1`
@@ -389,7 +389,7 @@ The project uses a `.env` file for sensitive configuration:
    `vault-secrets-operator` to force a fresh login (metadata is only refreshed at login)
 3. Login fails reading the service account - `vault-ent/vault-sa-reader-rbac.yaml` is not applied
 4. `service account name/namespace not authorized` - the issuer SA must be `pki-issuer-sa` in `vault-secrets-operator`
-   (`vault read auth/kubernetes-auth-mount/role/pki-secret`)
+   (`vault read auth/kubernetes/role/pki-secret`)
 5. `common name ... not allowed by this role` - name is outside `allowed_domains` on
    `pki/roles/pki-cluster-issuer`; note `<name>.<ns>.svc` is a subdomain of `svc`, not `svc.cluster.local`
    (the CertificateRequest only says `Vault signing failed`)
@@ -414,22 +414,22 @@ The project uses a `.env` file for sensitive configuration:
 1. Check both containers: `kubectl logs -n vault-agent-app -l app=vault-agent-app -c app` and
    `-c vault-agent-init`
 2. The init container must log `authentication successful` then `rendered "(dynamic)"`
-3. Requires `task config:static-secret` to have run first (creates `k8s-auth-mount` and the KV secret)
+3. Requires `task config:static-secret` to have run first (creates the `jwt` auth mount and the KV secret)
 
 ## Architecture Notes
 
 ### Auth Mount Design
-- **`vso` (Kubernetes auth + token reviewer)**: a long-lived token for service account `vault-token-reviewer`
+- **`vso` `kubernetes` (Kubernetes auth + token reviewer)**: a long-lived token for service account `vault-token-reviewer`
   (`vault-ent/vault-jwt-service-account.yaml`, `vault-jwt-clusterrolebinding.yaml` with
   `system:auth-delegator`, `vault-jwt-secret.yaml`) lets Vault call the TokenReview API for the VSO
   operator's encrypted-cache login.
-- **`tn001` (JWT auth + OIDC discovery)**: Vault verifies app service account tokens offline against
+- **`tn001` `jwt` (JWT auth + OIDC discovery)**: Vault verifies app service account tokens offline against
   the cluster's OIDC issuer (`vault-ent/oidc-discovery-clusterrolebinding.yaml` makes discovery
   public). On k3d the issuer is in-cluster (`https://kubernetes.default.svc.cluster.local`), so the
   service-account CA is supplied as `oidc_discovery_ca_pem` and
   `task cluster:up` enables apiserver `anonymous-auth` (off by default in k3s); on EKS/GKE the public endpoint uses the system CA
   bundle. All example roles except PKI are JWT roles with `bound_claims` on this mount.
-- **`tn001` `kubernetes-auth-mount` (Kubernetes auth + SA annotations)**: reuses the `vault-token-reviewer`
+- **`tn001` `kubernetes` (Kubernetes auth + SA annotations)**: reuses the `vault-token-reviewer`
   token for TokenReview; `vault-ent/vault-sa-reader-rbac.yaml` adds `get serviceaccounts` so
   `use_annotations_as_alias_metadata` can copy `vault.hashicorp.com/alias-metadata-*` annotations into alias
   metadata. Mount, templated policy (accessor substituted by `sed`) and roles are written by
@@ -441,7 +441,7 @@ The project uses a `.env` file for sensitive configuration:
 - **Shared issuer trade-off**: the issuer is cluster-scoped with one Vault identity and one PKI role, so any
   namespace can request any `pki-app-*` name. Per-namespace isolation would need a namespaced `VaultIssuer`.
 - **Separate kubernetes auth mount**: JWT auth cannot read ServiceAccount annotations, so the issuer uses
-  `kubernetes-auth-mount` with `use_annotations_as_alias_metadata=true`. Vault reads the SA (hence the
+  the `kubernetes` auth mount with `use_annotations_as_alias_metadata=true`. Vault reads the SA (hence the
   `vault-sa-reader` ClusterRole) and copies `vault.hashicorp.com/alias-metadata-<key>` annotations into alias metadata.
 - **Templated policy**: `pki_role` metadata picks the signing role (`pki/roles/pki-cluster-issuer`).
 - **No pre-created entities**: unlike the entity demo, metadata comes from annotations at login. Anyone
@@ -450,7 +450,7 @@ The project uses a `.env` file for sensitive configuration:
 
 ### Static Secrets Architecture
 The static secrets implementation supports multiple application instances using:
-- **Glob Pattern Matching**: The `static-secret` Vault role uses `bound_service_account_namespaces: "static-app-*"` to authorize all static app instances
+- **Glob Pattern Matching**: The `static-secret` JWT role uses glob `bound_claims` (`/kubernetes.io/namespace: static-app-*`) to authorize all static app instances
 - **Template-Based Deployment**: Manifests are generated from templates in `vault-ent/static-secrets/templates/` with `${APP_NAME}` substitution
 - **Configurable Instance Count**: The `static_app_count` variable (default: 3) controls how many instances are deployed
 - **Dedicated Resources**: Each instance gets its own namespace, service account, VaultAuth, VaultStaticSecret, and deployment
@@ -486,5 +486,5 @@ The static secrets implementation supports multiple application instances using:
   before then is expected, not a sign that entity or auth configuration failed
 - SA annotation metadata is only read at login; after changing an annotation, re-create
   `VaultAuth/pki-issuer-auth` to force VSO to re-authenticate
-- `task uninstall:apps` disables `kubernetes-auth-mount` and deletes the `vault-sa-reader` RBAC
+- `task uninstall:apps` disables the `tn001` `kubernetes` auth mount and deletes the `vault-sa-reader` RBAC
 - The Vault Agent demo is optional and excluded from `task secrets` / `task all`

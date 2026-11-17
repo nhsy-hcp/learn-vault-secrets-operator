@@ -6,7 +6,7 @@ metadata:
   namespace: dynamic-app
 spec:
   method: jwt
-  mount: k8s-auth-mount
+  mount: jwt
   namespace: tn001
   jwt:
     role: dynamic-secret

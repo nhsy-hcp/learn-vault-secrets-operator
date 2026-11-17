@@ -83,7 +83,7 @@ tasks:
       - terraform init -upgrade
 
   all:
-    desc: run full terraform cycle (init, validate, format, plan)
+    desc: run full terraform cycle (format, init, validate, apply, credentials)
     cmds:
       - task: format
       - task: init
@@ -92,7 +92,7 @@ tasks:
       - task: credentials
 
   credentials:
-    desc: fetch eks credentials and update kubeconfig
+    desc: fetch gke credentials and update kubeconfig
     cmds:
       - gcloud container clusters get-credentials $(terraform output -raw gke_cluster_name) --region $(terraform output -raw region)
       - kubectl cluster-info

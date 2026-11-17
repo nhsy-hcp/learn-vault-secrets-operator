@@ -11,7 +11,7 @@ from common import BLUE, BLUE_FILL, app_ns, box, deliver, diagram, group, icon, 
 # Grid (LR): column 1 inputs · column 2 agent / auth · column 3 volume / KV · column 4 app / note
 with diagram("vault-agent-secrets", direction="LR"):
     with vault_ns():
-        role = icon(Vault, "auth/k8s-auth-mount", "role: vault-agent-secret", group="vault")
+        role = icon(Vault, "auth/jwt", "role: vault-agent-secret", group="vault")
         kv = box("kvv2/webapp/config", "KV v2", group="vault")
 
     with app_ns("vault-agent-app"):

@@ -67,7 +67,7 @@ task all
 
 # Or step-by-step
 task cluster:up # create or start the k3d cluster `vso-lab` (idempotent)
-task install    # install, initialise, unseal and configure Vault, then install VSO
+task install    # install, initialise, unseal and configure Vault, then cert-manager and VSO
 task secrets    # configure, deploy and verify every example
 task verify     # re-run all verifications
 ```
@@ -75,7 +75,7 @@ task verify     # re-run all verifications
 The cluster (context `k3d-vso-lab`) uses the `local-path` storage class. Vault is exposed on NodePort
 30820, mapped to http://localhost:8200, so no port-forward is needed. `task cluster:stop` stops it.
 
-Tear down with `task uninstall` (Vault, VSO and all apps) or `task clean` (delete the k3d cluster
+Tear down with `task uninstall` (Vault, cert-manager, VSO and all apps) or `task clean` (delete the k3d cluster
 and `vault-init.json`).
 
 ### EKS or GKE
