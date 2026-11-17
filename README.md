@@ -39,8 +39,8 @@ Transit engine in the `vso` namespace.
 
 ### Vault Enterprise License
 
-A Vault Enterprise license is required: it enables Vault namespaces and the VSO CSI features. Place a
-valid license file in `vault-ent/` before installing; `task install:vault` loads it into the cluster.
+A Vault Enterprise license is required: it enables Vault namespaces, the VSO CSI features and the VSO
+cert-manager issuers (`VaultIssuer`, `VaultClusterIssuer`). Place a valid license file in `vault-ent/` before installing; `task install:vault` loads it into the cluster.
 
 ```bash
 vault-ent/

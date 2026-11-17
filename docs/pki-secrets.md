@@ -11,6 +11,8 @@ issuer to its PKI role.
 - Instances: controlled by the `pki_app_count` variable (default 3)
 - cert-manager is installed by `task install` (`install:cert-manager`); `task config:pki-secret` needs both cert-manager
   and VSO running, because it applies the `VaultClusterIssuer` and waits for it
+- `VaultIssuer`/`VaultClusterIssuer` only work with a licensed Vault Enterprise server
+  ([setup](https://developer.hashicorp.com/vault/docs/deploy/kubernetes/vso/cert-manager/setup))
 - Upgrading a lab deployed with the earlier `VaultPKISecret` version: run `task uninstall` first, otherwise VSO and
   cert-manager both write `pki-app-tls`
 
@@ -61,8 +63,10 @@ kubectl describe certificaterequest -n pki-app-1   # approval and signing events
 task rotate:pki-secret     # deletes pki-app-tls; cert-manager re-issues
 ```
 
-A `Certificate` for a name outside `allowed_domains` (e.g. `foo.other.com`) stays not Ready with a Vault
-`not allowed by this role` error on its `CertificateRequest`.
+A `Certificate` for a name outside `allowed_domains` (e.g. `foo.other.com`) stays not Ready: its
+`CertificateRequest` is approved but stays `Ready=False` with only "Vault signing failed. Check the certificate
+request parameters and Vault PKI role configuration." and a `SigningFailed` event. The specific PKI role refusal
+is in the Vault audit log (`task logs`, root `stdout` audit device).
 
 ## Related
 

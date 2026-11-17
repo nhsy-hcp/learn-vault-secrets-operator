@@ -62,5 +62,9 @@ task uninstall             # optional: remove Vault, VSO and apps first
 task eks:destroy:auto      # or: task gke:destroy:auto
 ```
 
+> **Note:** `task uninstall` also uninstalls cert-manager and deletes its CRDs, and with them every `Certificate` in
+> the cluster. If cert-manager was installed before the lab, skip it or run `task uninstall:apps`,
+> `task uninstall:vso` and `task uninstall:vault` instead.
+
 Destroy takes 15-20+ minutes. Wait a few minutes for asynchronous deletions (load balancers, disks)
 before confirming with the verify command above, which should then return a not-found error.
