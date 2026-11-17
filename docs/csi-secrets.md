@@ -10,50 +10,7 @@ ever created: the data exists only in the pod's tmpfs volume.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-  classDef app fill:#ffffff,stroke:#4b5563,stroke-width:2px,color:#111827
-  classDef vso fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
-  classDef vault fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827
-  classDef out fill:#ecfdf5,stroke:#15803d,stroke-width:2px,color:#14532d
-  classDef k8s fill:#e5e7eb,stroke:#6b7280,stroke-width:2px,color:#111827
-  subgraph app["csi-app"]
-    POD("<b>Pod</b><br/>csi-app")
-    CS("<b>CSISecrets</b><br/>csi-demo")
-    VA("<b>VaultAuth</b><br/>csi-auth")
-    SA("<b>ServiceAccount</b><br/>csi-app-sa")
-    TMPFS("<b>tmpfs volume</b><br/>/secrets/static")
-  end
-
-  subgraph vso["vault-secrets-operator"]
-    DRV("<b>VSO CSI driver</b><br/>csi.vso.hashicorp.com")
-  end
-
-  subgraph vault["Vault Enterprise · namespace tn001"]
-    ROLE("<b>auth/k8s-auth-mount</b><br/>role: csi-secret")
-    KV[("<b>kvv2/db-creds</b>")]
-  end
-
-  POD -->|① CSI volume| DRV
-  DRV -->|② reads| CS
-  CS --> VA
-  VA -.->|uses| SA
-  DRV -->|③ JWT login| ROLE
-  ROLE -->|④| KV
-  DRV -->|⑤| TMPFS
-  TMPFS -.->|mounted into| POD
-
-  class POD,CS,VA app
-  class SA k8s
-  class DRV vso
-  class ROLE,KV vault
-  class TMPFS out
-  style app fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
-  style vso fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
-  style vault fill:#f9fafb,stroke:#374151,stroke-width:2px,color:#111827
-  linkStyle 3 stroke:#9ca3af,stroke-dasharray:4
-  linkStyle 6,7 stroke:#15803d,stroke-width:2px
-```
+![CSI secrets flow](images/csi-secrets.png)
 
 Nothing is persisted as a `Secret`, so the data disappears with the pod. The trade-off is that
 anything that can't mount the volume can't read the data.

@@ -46,3 +46,7 @@ notes.txt
 /.tmp/
 /.plans/
 .claude/
+
+# Python (docs/diagrams)
+.venv/
+__pycache__/

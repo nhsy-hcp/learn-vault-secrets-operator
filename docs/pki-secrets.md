@@ -16,49 +16,7 @@ issuer to its PKI role.
 
 ## Architecture
 
-```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 300}}}%%
-flowchart LR
-  classDef app fill:#ffffff,stroke:#4b5563,stroke-width:2px,color:#111827
-  classDef vso fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
-  classDef vault fill:#f3f4f6,stroke:#374151,stroke-width:2px,color:#111827
-  classDef out fill:#ecfdf5,stroke:#15803d,stroke-width:2px,color:#14532d
-  classDef k8s fill:#e5e7eb,stroke:#6b7280,stroke-width:2px,color:#111827
-  subgraph a["pki-app-N"]
-    C("<b>Certificate</b><br/>pki-app-cert")
-    T("<b>Secret</b><br/>pki-app-tls")
-    P("<b>Deployment</b><br/>pki-app")
-  end
-
-  CI("<b>VaultClusterIssuer</b><br/>vault-pki<br/>(cluster-scoped)")
-
-  subgraph vso["vault-secrets-operator"]
-    VA("<b>VaultAuth</b><br/>pki-issuer-auth")
-    SA("<b>ServiceAccount</b><br/>pki-issuer-sa<br/>alias-metadata-pki_role: pki-cluster-issuer")
-  end
-
-  subgraph vault["Vault Enterprise · namespace tn001"]
-    ROLE("<b>auth/kubernetes-auth-mount</b><br/>role: pki-secret<br/>use_annotations_as_alias_metadata")
-    POL("<b>policy pki-secret</b><br/>pki/sign/{{...metadata.pki_role}}")
-    PKI[("<b>pki/roles/pki-cluster-issuer</b><br/>allowed_domains: pki-app-*.…")]
-  end
-
-  C -->|① CertificateRequest| CI -->|②| VA -->|③ kubernetes login| ROLE
-  ROLE -.->|④ TokenReview + read SA annotations| SA
-  ROLE -->|⑤| POL --> PKI
-  C -->|⑥| T --> P
-
-  class C,P app
-  class CI,VA vso
-  class SA k8s
-  class ROLE,POL,PKI vault
-  class T out
-  style a fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#9a3412
-  style vso fill:#eff6ff,stroke:#2563eb,stroke-width:2px,color:#1e3a8a
-  style vault fill:#f9fafb,stroke:#374151,stroke-width:2px,color:#111827
-  linkStyle 3 stroke:#9ca3af,stroke-dasharray:4
-  linkStyle 6,7 stroke:#15803d,stroke-width:2px
-```
+![PKI secrets flow](images/pki-secrets.png)
 
 ## How it works
 
