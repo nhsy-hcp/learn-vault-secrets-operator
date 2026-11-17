@@ -32,7 +32,7 @@ with diagram("entity-secrets", direction="TB"):
         apps.append((sa, vss, auth, sec, dep))
 
     with vault_ns():
-        role = icon(Vault, "auth/k8s-auth-mount", "role: entity-secret\nuser_claim: SA name")
+        role = icon(Vault, "auth/jwt", "role: entity-secret\nuser_claim: SA name")
         alias = box("Entity alias", "entity-app-N-sa")
         entity = box("Entity entity-app-N", "metadata: application_name,\nteam, business_unit, namespace")
         policy = box("policy entity-secret", "kvv2/data/teams/{{identity.entity.metadata.team}}/*")

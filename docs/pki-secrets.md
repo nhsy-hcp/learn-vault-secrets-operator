@@ -24,7 +24,7 @@ issuer to its PKI role.
    `{group: secrets.hashicorp.com, kind: VaultClusterIssuer, name: vault-pki}`. cert-manager generates the key,
    creates a `CertificateRequest` (auto-approved via the VSO chart's `certManager.approverRBAC`), and VSO sends the
    CSR to Vault. cert-manager writes the result to `pki-app-tls` and renews it 15 minutes before expiry.
-2. The issuer logs in to `kubernetes-auth-mount`, a **kubernetes** auth mount in `tn001`, as
+2. The issuer logs in to `kubernetes`, a **kubernetes** auth mount in `tn001`, as
    `vault-secrets-operator/pki-issuer-sa`. With `use_annotations_as_alias_metadata=true`, Vault reads the SA and
    copies each `vault.hashicorp.com/alias-metadata-<key>` annotation into the alias metadata
    (`vault-ent/vault-sa-reader-rbac.yaml` grants the reviewer token `get serviceaccounts`).

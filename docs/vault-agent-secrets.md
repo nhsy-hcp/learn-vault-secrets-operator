@@ -7,7 +7,7 @@ workload wants a config file in its own format.
 - Manifests: [`vault-ent/vault-agent-secrets/`](../vault-ent/vault-agent-secrets/)
 - Tasks: `task config:vault-agent-secret`, `task deploy:vault-agent-secret`, `task verify:vault-agent-secret`, `task restart:vault-agent-secret`
 - **Optional**: not part of `task secrets` or `task all` - run the tasks explicitly
-- Requires `task config:static-secret` first, which creates `k8s-auth-mount` and `kvv2/webapp/config`
+- Requires `task config:static-secret` first, which creates the `jwt` auth mount and `kvv2/webapp/config`
 
 ## Architecture
 
@@ -46,7 +46,7 @@ pattern to reach for when a workload wants a rendered file rather than a Kuberne
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  2. Agent authenticates to Vault                            │
-│     - auth/k8s-auth-mount/role/vault-agent-secret in tn001  │
+│     - auth/jwt/role/vault-agent-secret in tn001             │
 │     - service account vault-agent-sa                        │
 └─────────────────────────────────────────────────────────────┘
                           │
@@ -67,7 +67,7 @@ pattern to reach for when a workload wants a rendered file rather than a Kuberne
 
 This demo is **optional** and is not part of `task secrets` or `task all`. It reads the same
 `kvv2/webapp/config` secret as the Static Secrets demo, so `task config:static-secret` must have run
-first to create both `k8s-auth-mount` and the KV data.
+first to create both the `jwt` auth mount and the KV data.
 
 ## Verifying
 

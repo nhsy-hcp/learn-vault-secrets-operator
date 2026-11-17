@@ -12,7 +12,7 @@ from common import app_ns, box, deliver, diagram, icon, note, ref, same_rank, st
 # Grid (TB): one row per namespace (app · VSO · Vault); columns line up the hand-offs
 with diagram("pki-secrets", direction="TB"):
     with vault_ns():
-        role = icon(Vault, "auth/kubernetes-auth-mount", "role: pki-secret\nannotations → alias metadata", group="c2")
+        role = icon(Vault, "auth/kubernetes", "role: pki-secret\nannotations → alias metadata", group="c2")
         policy = box("policy pki-secret", "pki/sign/{{…metadata.pki_role}}", group="c3")
         pki = box("pki/roles/pki-cluster-issuer", "allowed_domains: pki-app-*", group="c4")
 

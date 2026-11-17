@@ -10,10 +10,10 @@ controller:
       persistenceModel: direct-encrypted
       storageEncryption:
         enabled: true
-        mount: k8s-auth-mount
+        mount: kubernetes
         namespace: vso
         keyName: vso-client-cache
-        transitMount: vso-transit
+        transitMount: transit
         kubernetes:
           role: auth-role-operator
           serviceAccount: vault-secrets-operator-controller-manager

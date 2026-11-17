@@ -12,12 +12,12 @@ Diagrams are rendered from [`docs/diagrams/`](diagrams/) with `task docs:diagram
 
 | Namespace | Mount | Type | Used by |
 |---|---|---|---|
-| `vso` | `k8s-auth-mount` | kubernetes (token reviewer) | VSO controller (role `auth-role-operator`) |
-| `vso` | `vso-transit` | transit, key `vso-client-cache` | VSO encrypted client cache |
-| `tn001` | `k8s-auth-mount` | jwt (OIDC discovery) | every demo application except PKI |
-| `tn001` | `kubernetes-auth-mount` | kubernetes, SA annotations as alias metadata | PKI (`VaultClusterIssuer`) |
+| `vso` | `kubernetes` | kubernetes (token reviewer) | VSO controller (role `auth-role-operator`) |
+| `vso` | `transit` | transit, key `vso-client-cache` | VSO encrypted client cache |
+| `tn001` | `jwt` | jwt (OIDC discovery) | every demo application except PKI |
+| `tn001` | `kubernetes` | kubernetes, SA annotations as alias metadata | PKI (`VaultClusterIssuer`) |
 | `tn001` | `kvv2` | kv-v2 | static, CSI, entity, Vault Agent |
-| `tn001` | `db` | database, role `dev-postgres` | dynamic |
+| `tn001` | `database` | database, role `dev-postgres` | dynamic |
 | `tn001` | `pki` | pki, roles `example-dot-com` and `pki-cluster-issuer` | dynamic, PKI |
 
 KV v2 paths in `tn001`:
@@ -44,7 +44,7 @@ write Kubernetes Secret (or CSI volume) → update status → cache (encrypted) 
 
 | Namespace | Service account | Purpose |
 |---|---|---|
-| `vault` | `vault` | Vault server and Vault CSI provider; `vault` SA is the token reviewer for the `vso` mount |
+| `vault` | `vault`, `vault-token-reviewer` | Vault server and Vault CSI provider; `vault-token-reviewer` is the token reviewer for `vso/kubernetes` and `tn001/kubernetes` |
 | `vault-secrets-operator` | `vault-secrets-operator-controller-manager`, `pki-issuer-sa` | VSO controller; PKI cluster issuer identity (annotated) |
 | `cert-manager` | `cert-manager` | cert-manager (signs PKI lab certificates via VSO) |
 | `static-app-1..3` | `static-app-sa` (same name in each) | Static secrets |
@@ -56,13 +56,14 @@ write Kubernetes Secret (or CSI volume) → update status → cache (encrypted) 
 
 ## Authentication
 
-Two auth mounts, both named `k8s-auth-mount`, live in different Vault namespaces:
+Each mount is named after its type. Two auth mounts, `vso/kubernetes` and `tn001/jwt`, serve the
+operator and the demo apps (PKI's separate `tn001/kubernetes` mount is covered below):
 
 ```
  vso namespace (VSO controller only)          tn001 namespace (all demo apps)
  ┌────────────────────────────────────┐       ┌────────────────────────────────────┐
  │ kubernetes auth                    │       │ jwt auth                           │
- │ token_reviewer_jwt = vault SA token│       │ oidc_discovery_url = cluster issuer│
+ │ token_reviewer_jwt = reviewer SA   │       │ oidc_discovery_url = cluster issuer│
  │ (vault-token-secret, long-lived,   │       │ bound_issuer = cluster issuer      │
  │  system:auth-delegator)            │       │ validates tokens offline via JWKS  │
  └─────────────────▲──────────────────┘       └─────────────────▲──────────────────┘
@@ -72,10 +73,10 @@ Two auth mounts, both named `k8s-auth-mount`, live in different Vault namespaces
 ```
 
 - **`vso` mount** (`task config:vso:encrypted-cache`): Kubernetes auth. Vault calls the TokenReview
-  API with the long-lived `vault` SA token from `vault-token-secret`
+  API with the long-lived `vault-token-reviewer` SA token from `vault-token-secret`
   (ClusterRoleBinding `vault-reviewer-binding` → `system:auth-delegator`). Role
   `auth-role-operator` grants policy `vso-transit` (encrypt/decrypt on
-  `vso-transit/*/vso-client-cache`), token period 1 hour.
+  `transit/*/vso-client-cache`), token period 1 hour.
 - **`tn001` mount** (`task config:static-secret`): JWT auth. Vault fetches the cluster's OIDC
   discovery document and JWKS (`oidc-discovery-public` ClusterRoleBinding allows unauthenticated
   discovery) and validates service account tokens itself. On k3d the issuer is in-cluster
@@ -84,7 +85,7 @@ Two auth mounts, both named `k8s-auth-mount`, live in different Vault namespaces
   by default); on EKS/GKE the public issuer uses the system CA bundle.
 
 Login flow for a demo app: VSO requests a token for the app's service account (TokenRequest,
-audience `vault`) → logs in to `tn001/auth/k8s-auth-mount` with the app's role → Vault checks the
+audience `vault`) → logs in to `tn001/auth/jwt` with the app's role → Vault checks the
 signature, issuer and bound claims → issues a Vault token with the role's policies.
 
 ### Roles and isolation
@@ -94,7 +95,7 @@ Each example has its own Vault role and policy in `tn001`, but isolation differs
 - **Static, entity**: one role serves several namespaces through globs
   (`static-app-*`, `entity-app-*`).
 - **PKI**: the `VaultClusterIssuer` logs in as `vault-secrets-operator/pki-issuer-sa` to the separate
-  kubernetes auth mount `kubernetes-auth-mount`, where SA annotations become alias metadata. A templated policy
+  kubernetes auth mount `kubernetes`, where SA annotations become alias metadata. A templated policy
   restricts it to `pki/roles/pki-cluster-issuer`.
 - **Entity metadata**: each namespace has a unique SA name, mapped to a pre-created entity whose
   metadata attributes usage for chargeback; the templated policy also scopes reads to the entity's

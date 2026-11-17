@@ -6,7 +6,7 @@
 set -euo pipefail
 
 APPS_FILE="${1:-vault-ent/entity-secrets/apps.json}"
-AUTH_MOUNT="k8s-auth-mount"
+AUTH_MOUNT="jwt"
 
 : "${VAULT_TOKEN:?VAULT_TOKEN must be set}"
 

@@ -24,8 +24,8 @@ with diagram("dynamic-secrets", direction="TB"):
         pg = icon(PostgreSQL, "PostgreSQL")
 
     with vault_ns():
-        role = icon(Vault, "auth/k8s-auth-mount", "role: dynamic-secret", group="db")
-        db = box("db/creds/dev-postgres", "short-lived user per lease", group="db")
+        role = icon(Vault, "auth/jwt", "role: dynamic-secret", group="db")
+        db = box("database/creds/dev-postgres", "short-lived user per lease", group="db")
         pki = box("pki/issue/example-dot-com", "TLS certificate")
 
     same_rank(vds, vps, sdb, stls)

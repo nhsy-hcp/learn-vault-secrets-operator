@@ -21,7 +21,7 @@ with diagram("csi-secrets", direction="LR"):
         pod = icon(Pod, "Pod", "csi-app", group="vol")
 
     with vault_ns():
-        role = icon(Vault, "auth/k8s-auth-mount", "role: csi-secret", group="vault")
+        role = icon(Vault, "auth/jwt", "role: csi-secret", group="vault")
         kv = box("kvv2/db-creds", "KV v2", group="vault")
 
     takeaway = note("No Kubernetes Secret is created:<br/>values only exist in the pod's tmpfs volume")

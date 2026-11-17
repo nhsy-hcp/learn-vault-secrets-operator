@@ -8,7 +8,7 @@ set -euo pipefail
 
 APP_COUNT="${1:-3}"
 MAX_TTL="${2:-4h}"
-AUTH_MOUNT="kubernetes-auth-mount"
+AUTH_MOUNT="kubernetes"
 
 : "${VAULT_TOKEN:?VAULT_TOKEN must be set}"
 : "${KUBE_HOST:?KUBE_HOST must be set}"

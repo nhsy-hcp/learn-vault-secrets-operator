@@ -23,16 +23,16 @@ it lapses.
 - Bound namespaces: `dynamic-app`
 - Token TTL: 1 hour
 - Permissions:
-  - Read: `db/creds/dev-postgres`
-  - Read: `pki/issue/example-dot-com`
+  - Read: `database/creds/dev-postgres`
+  - Create/Update (issue): `pki/issue/example-dot-com`
 
 ## Synchronisation flow
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  1. User creates VaultDynamicSecret CRD                     │
-│     - Specifies Vault path: db/creds/dev-postgres           │
-│     - Defines renewal and rotation settings                 │
+│     - Specifies Vault path: database/creds/dev-postgres     │
+│     - Names the destination Secret and VaultAuth            │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -52,9 +52,9 @@ it lapses.
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  4. VSO requests dynamic credentials                        │
-│     - Calls db/creds/dev-postgres                           │
+│     - Calls database/creds/dev-postgres                     │
 │     - Vault generates new DB credentials                    │
-│     - Credentials have TTL (default: 1 hour)                │
+│     - Lease capped at max_ttl (postgresql_max_ttl, 24h)     │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -68,15 +68,15 @@ it lapses.
 ┌─────────────────────────────────────────────────────────────┐
 │  6. VSO manages credential lifecycle                        │
 │     - Renews lease before expiration                        │
-│     - Rotates credentials based on policy                   │
+│     - Fetches new credentials when the lease ends           │
 │     - Updates K8s Secret with new credentials               │
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  7. Application pod consumes credentials                    │
-│     - Mounts as volume at /secrets/dynamic/db               │
-│     - Automatically gets updated credentials                │
+│     - Volume at /secrets/dynamic/db (refreshes in place)    │
+│     - Env vars DB_USERNAME/DB_PASSWORD need a pod restart   │
 └─────────────────────────────────────────────────────────────┘
 ```
 

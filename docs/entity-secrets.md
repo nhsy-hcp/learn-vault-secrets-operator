@@ -59,7 +59,7 @@ is already unique per namespace.
 
 1. Creates or updates the entity `identity/entity/name/<app>` with `application_name`, `team`,
    `business_unit` and `namespace` metadata, replacing any previous metadata.
-2. Looks up the alias `<app>-sa` on the `k8s-auth-mount` accessor, then:
+2. Looks up the alias `<app>-sa` on the `jwt` mount accessor, then:
    - creates it pointing at the entity if it is missing;
    - **re-points** it if the app logged in before onboarding and Vault auto-created an entity
      (named `entity_…`). The auto-created entity is left in place with no aliases;
@@ -87,7 +87,7 @@ version of each team's KV secret, which `instantUpdates` pushes to the pods.
 **Secrets**
 - One per distinct team in `apps.json`: `kvv2/teams/<team>/config` with `team`, `username` and
   `password` keys
-- Requires the `kvv2` mount and `k8s-auth-mount` created by `task config:static-secret`
+- Requires the `kvv2` mount and `jwt` auth mount created by `task config:static-secret`
 
 ## Synchronisation flow
 
@@ -102,7 +102,7 @@ version of each team's KV secret, which `instantUpdates` pushes to the pods.
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  2. VSO logs in with the entity-app-N-sa token              │
-│     - auth/k8s-auth-mount/role/entity-secret in tn001       │
+│     - auth/jwt/role/entity-secret in tn001                  │
 │     - SA name claim matches the pre-created alias           │
 │     - claim_mappings refresh the alias metadata             │
 └─────────────────────────────────────────────────────────────┘

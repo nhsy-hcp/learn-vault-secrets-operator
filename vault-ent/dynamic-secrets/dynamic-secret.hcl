@@ -1,4 +1,4 @@
-path "db/creds/dev-postgres" {
+path "database/creds/dev-postgres" {
 	capabilities = ["read"]
 }
 
